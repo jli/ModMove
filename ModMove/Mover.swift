@@ -167,87 +167,85 @@ final class Mover {
     }
 
     private func resizeWindow(window: AccessibilityElement, mouseDelta: CGPoint) {
-        if let initWinSize = self.initialWindowSize, let initWinPos = self.initialWindowPosition,
-            let corner = self.closestCorner, let frame = self.frame {
+        guard let initWinSize = self.initialWindowSize,
+              let initWinPos = self.initialWindowPosition,
+              let corner = self.closestCorner,
+              let frame = self.frame else {
+            return
+        }
 
-            // Throttle updates to 60fps for better performance
-            let now = CACurrentMediaTime()
-            if now - lastUpdateTime < UPDATE_INTERVAL {
-                return
-            }
-            lastUpdateTime = now
+        // Throttle updates to 50fps for better performance
+        let now = CACurrentMediaTime()
+        if now - lastUpdateTime < UPDATE_INTERVAL {
+            return
+        }
+        lastUpdateTime = now
 
-            var mdx = mouseDelta.x
-            var mdy = mouseDelta.y
+        var mdx = mouseDelta.x
+        var mdy = mouseDelta.y
 
-            if shouldConstrainMouseDelta(window, mouseDelta) {
-                switch corner {
-                case .TopLeft:
-                    mdx = max(mouseDelta.x, frame.minX - initWinPos.x)
-                    mdy = max(mouseDelta.y, frame.minY - initWinPos.y)
-                case .TopRight:
-                    mdx = min(mouseDelta.x, frame.maxX - (initWinPos.x + initWinSize.width))
-                    mdy = max(mouseDelta.y, frame.minY - initWinPos.y)
-                case .BottomLeft:
-                    mdx = max(mouseDelta.x, frame.minX - initWinPos.x)
-                    mdy = min(mouseDelta.y, frame.maxY - (initWinPos.y + initWinSize.height))
-                case .BottomRight:
-                    mdx = min(mouseDelta.x, frame.maxX - (initWinPos.x + initWinSize.width))
-                    mdy = min(mouseDelta.y, frame.maxY - (initWinPos.y + initWinSize.height))
-                }
-            }
-
+        if shouldConstrainMouseDelta(window, mouseDelta) {
             switch corner {
             case .TopLeft:
-                window.size = CGSize(width: initWinSize.width - mdx, height: initWinSize.height - mdy)
-                // Only use read-back when shrinking (might hit minimum size constraints)
-                if mdx > 0 || mdy > 0 {
-                    // Shrinking: check actual size in case it hit minimum
-                    if let actualSize = window.size {
-                        let actualDx = initWinSize.width - actualSize.width
-                        let actualDy = initWinSize.height - actualSize.height
-                        window.position = CGPoint(x: initWinPos.x + actualDx, y: initWinPos.y + actualDy)
-                    } else {
-                        window.position = CGPoint(x: initWinPos.x + mdx, y: initWinPos.y + mdy)
-                    }
-                } else {
-                    // Growing: use simple calculation
-                    window.position = CGPoint(x: initWinPos.x + mdx, y: initWinPos.y + mdy)
-                }
+                mdx = max(mouseDelta.x, frame.minX - initWinPos.x)
+                mdy = max(mouseDelta.y, frame.minY - initWinPos.y)
             case .TopRight:
-                window.size = CGSize(width: initWinSize.width + mdx, height: initWinSize.height - mdy)
-                // Only use read-back when shrinking height
-                if mdy > 0 {
-                    // Shrinking height: check actual size
-                    if let actualSize = window.size {
-                        let actualDy = initWinSize.height - actualSize.height
-                        window.position = CGPoint(x: initWinPos.x, y: initWinPos.y + actualDy)
-                    } else {
-                        window.position = CGPoint(x: initWinPos.x, y: initWinPos.y + mdy)
-                    }
-                } else {
-                    // Growing height: use simple calculation
-                    window.position = CGPoint(x: initWinPos.x, y: initWinPos.y + mdy)
-                }
+                mdx = min(mouseDelta.x, frame.maxX - (initWinPos.x + initWinSize.width))
+                mdy = max(mouseDelta.y, frame.minY - initWinPos.y)
             case .BottomLeft:
-                window.size = CGSize(width: initWinSize.width - mdx, height: initWinSize.height + mdy)
-                // Only use read-back when shrinking width
-                if mdx > 0 {
-                    // Shrinking width: check actual size
-                    if let actualSize = window.size {
-                        let actualDx = initWinSize.width - actualSize.width
-                        window.position = CGPoint(x: initWinPos.x + actualDx, y: initWinPos.y)
-                    } else {
-                        window.position = CGPoint(x: initWinPos.x + mdx, y: initWinPos.y)
-                    }
-                } else {
-                    // Growing width: use simple calculation
-                    window.position = CGPoint(x: initWinPos.x + mdx, y: initWinPos.y)
-                }
+                mdx = max(mouseDelta.x, frame.minX - initWinPos.x)
+                mdy = min(mouseDelta.y, frame.maxY - (initWinPos.y + initWinSize.height))
             case .BottomRight:
-                // BottomRight only changes size, no position adjustment needed
-                window.size = CGSize(width: initWinSize.width + mdx, height: initWinSize.height + mdy)
+                mdx = min(mouseDelta.x, frame.maxX - (initWinPos.x + initWinSize.width))
+                mdy = min(mouseDelta.y, frame.maxY - (initWinPos.y + initWinSize.height))
             }
+        }
+
+        // Calculate desired size based on corner and mouse delta
+        var desiredWidth: CGFloat
+        var desiredHeight: CGFloat
+
+        switch corner {
+        case .TopLeft, .BottomLeft:
+            desiredWidth = initWinSize.width - mdx
+        case .TopRight, .BottomRight:
+            desiredWidth = initWinSize.width + mdx
+        }
+
+        switch corner {
+        case .TopLeft, .TopRight:
+            desiredHeight = initWinSize.height - mdy
+        case .BottomLeft, .BottomRight:
+            desiredHeight = initWinSize.height + mdy
+        }
+
+        let desiredSize = CGSize(width: desiredWidth, height: desiredHeight)
+
+        // Set size first - let macOS apply any constraints it wants
+        window.size = desiredSize
+
+        // For corners that need position adjustment, read back actual size to ensure anchor point stays fixed
+        // This handles cases where macOS applies minimum size constraints
+        switch corner {
+        case .TopLeft:
+            if let actualSize = window.size {
+                let actualDx = initWinSize.width - actualSize.width
+                let actualDy = initWinSize.height - actualSize.height
+                window.position = CGPoint(x: initWinPos.x + actualDx, y: initWinPos.y + actualDy)
+            }
+        case .TopRight:
+            if let actualSize = window.size {
+                let actualDy = initWinSize.height - actualSize.height
+                window.position = CGPoint(x: initWinPos.x, y: initWinPos.y + actualDy)
+            }
+        case .BottomLeft:
+            if let actualSize = window.size {
+                let actualDx = initWinSize.width - actualSize.width
+                window.position = CGPoint(x: initWinPos.x + actualDx, y: initWinPos.y)
+            }
+        case .BottomRight:
+            // BottomRight only changes size, no position adjustment needed
+            break
         }
     }
 
