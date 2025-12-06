@@ -20,10 +20,11 @@ echo ""
 
 # Step 1: Check for running instances BEFORE building
 echo -e "${YELLOW}[1/5] Checking for existing ModMove instances...${NC}"
-EXISTING_PROCS=$(ps aux | grep -i "[M]odMove" || true)
+# Look specifically for the ModMove binary in /Applications (not terminals, editors, etc.)
+EXISTING_PROCS=$(ps aux | grep "/Applications/ModMove.*\.app/Contents/MacOS/ModMove" | grep -v grep || true)
 if [ -n "$EXISTING_PROCS" ]; then
     echo "Found running instances:"
-    echo "$EXISTING_PROCS" | awk '{print "  PID " $2 ": " $11 " " $12 " " $13}'
+    echo "$EXISTING_PROCS" | awk '{print "  PID " $2 ": " $11}'
     echo ""
 else
     echo "  No instances running"
@@ -46,10 +47,14 @@ fi
 echo -e "${GREEN}  Build complete!${NC}"
 echo ""
 
-# Step 3: Kill existing instances
+# Step 3: Kill existing instances (only the actual app binary, not terminals/editors)
 echo -e "${YELLOW}[3/5] Stopping all ModMove instances...${NC}"
-if pgrep -f "[M]odMove" > /dev/null; then
-    pkill -f "[M]odMove" || true
+MODMOVE_PIDS=$(ps aux | grep "/Applications/ModMove.*\.app/Contents/MacOS/ModMove" | grep -v grep | awk '{print $2}')
+if [ -n "$MODMOVE_PIDS" ]; then
+    echo "$MODMOVE_PIDS" | while read -r pid; do
+        echo "  Killing PID $pid"
+        kill "$pid" 2>/dev/null || true
+    done
     sleep 1
     echo -e "${GREEN}  Stopped existing instances${NC}"
 else
@@ -85,10 +90,10 @@ echo -e "${YELLOW}[5/5] Launching ModMove and verifying...${NC}"
 open "$DEST_PATH"
 sleep 2
 
-# Verify exactly one instance is running
+# Verify exactly one instance is running (only check actual app binary)
 echo ""
 echo -e "${BLUE}Process verification:${NC}"
-RUNNING_PROCS=$(ps aux | grep -i "[M]odMove" || true)
+RUNNING_PROCS=$(ps aux | grep "/Applications/ModMove.*\.app/Contents/MacOS/ModMove" | grep -v grep || true)
 
 if [ -z "$RUNNING_PROCS" ]; then
     echo -e "${RED}  ERROR: No ModMove instances running!${NC}"
@@ -106,14 +111,13 @@ echo ""
 echo "Running instances:"
 echo "$RUNNING_PROCS" | while read -r line; do
     PID=$(echo "$line" | awk '{print $2}')
-    EXEC_PATH=$(echo "$line" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}')
-    BINARY_PATH=$(echo "$EXEC_PATH" | sed 's/ -.*$//')  # Strip arguments
+    BINARY_PATH=$(echo "$line" | awk '{print $11}')
 
     # Check if it's our version
     if [[ "$BINARY_PATH" == *"$APP_NAME"* ]]; then
-        echo -e "  ${GREEN}PID $PID: $EXEC_PATH [CURRENT VERSION]${NC}"
+        echo -e "  ${GREEN}PID $PID: $BINARY_PATH [CURRENT VERSION]${NC}"
     else
-        echo -e "  ${YELLOW}PID $PID: $EXEC_PATH [OLD VERSION]${NC}"
+        echo -e "  ${YELLOW}PID $PID: $BINARY_PATH [OLD VERSION]${NC}"
     fi
 done
 

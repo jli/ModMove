@@ -24,15 +24,19 @@ if [ ! -d "$APP_PATH" ]; then
     exit 1
 fi
 
-# Check for running instances
+# Check for running instances (only actual app binary, not terminals/editors)
 echo -e "${YELLOW}Checking for running instances...${NC}"
-EXISTING_PROCS=$(ps aux | grep -i "[M]odMove" || true)
+EXISTING_PROCS=$(ps aux | grep "/Applications/ModMove.*\.app/Contents/MacOS/ModMove" | grep -v grep || true)
 if [ -n "$EXISTING_PROCS" ]; then
     echo "Found running instances:"
-    echo "$EXISTING_PROCS" | awk '{print "  PID " $2 ": " $11 " " $12 " " $13}'
+    echo "$EXISTING_PROCS" | awk '{print "  PID " $2 ": " $11}'
     echo ""
     echo -e "${YELLOW}Stopping all ModMove instances...${NC}"
-    pkill -f "[M]odMove" || true
+    MODMOVE_PIDS=$(echo "$EXISTING_PROCS" | awk '{print $2}')
+    echo "$MODMOVE_PIDS" | while read -r pid; do
+        echo "  Killing PID $pid"
+        kill "$pid" 2>/dev/null || true
+    done
     sleep 1
     echo -e "${GREEN}  Stopped existing instances${NC}"
 else
