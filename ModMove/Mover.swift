@@ -151,17 +151,11 @@ final class Mover {
 
     private func getClosestCorner(window: AccessibilityElement, mouse: CGPoint) -> Corner {
         if let size = window.size, let position = window.position {
-            let xmid = position.x + size.width / 2
-            let ymid = position.y + size.height / 2
-            if mouse.x < xmid && mouse.y < ymid {
-                return .TopLeft
-            } else if mouse.x >= xmid && mouse.y < ymid {
-                return .TopRight
-            } else if mouse.x < xmid && mouse.y >= ymid {
-                return .BottomLeft
-            } else {
-                return .BottomRight
-            }
+            return WindowCalculations.calculateClosestCorner(
+                windowPosition: position,
+                windowSize: size,
+                mousePosition: mouse
+            )
         }
         return .BottomRight
     }
@@ -181,115 +175,89 @@ final class Mover {
         }
         lastUpdateTime = now
 
-        var mdx = mouseDelta.x
-        var mdy = mouseDelta.y
+        // Determine if we should constrain based on speed
+        let shouldConstrain = WindowCalculations.shouldConstrainResize(
+            mouseSpeed: self.mouseSpeed,
+            speedThreshold: FAST_MOUSE_SPEED_THRESHOLD
+        )
 
-        if shouldConstrainMouseDelta(window, mouseDelta) {
-            switch corner {
-            case .TopLeft:
-                mdx = max(mouseDelta.x, frame.minX - initWinPos.x)
-                mdy = max(mouseDelta.y, frame.minY - initWinPos.y)
-            case .TopRight:
-                mdx = min(mouseDelta.x, frame.maxX - (initWinPos.x + initWinSize.width))
-                mdy = max(mouseDelta.y, frame.minY - initWinPos.y)
-            case .BottomLeft:
-                mdx = max(mouseDelta.x, frame.minX - initWinPos.x)
-                mdy = min(mouseDelta.y, frame.maxY - (initWinPos.y + initWinSize.height))
-            case .BottomRight:
-                mdx = min(mouseDelta.x, frame.maxX - (initWinPos.x + initWinSize.width))
-                mdy = min(mouseDelta.y, frame.maxY - (initWinPos.y + initWinSize.height))
-            }
-        }
+        // Calculate constrained delta
+        let constrainedDelta = WindowCalculations.calculateConstrainedResizeDelta(
+            mouseDelta: mouseDelta,
+            corner: corner,
+            initialPosition: initWinPos,
+            initialSize: initWinSize,
+            screenFrame: frame,
+            shouldConstrain: shouldConstrain
+        )
 
-        // Calculate desired size based on corner and mouse delta
-        var desiredWidth: CGFloat
-        var desiredHeight: CGFloat
-
-        switch corner {
-        case .TopLeft, .BottomLeft:
-            desiredWidth = initWinSize.width - mdx
-        case .TopRight, .BottomRight:
-            desiredWidth = initWinSize.width + mdx
-        }
-
-        switch corner {
-        case .TopLeft, .TopRight:
-            desiredHeight = initWinSize.height - mdy
-        case .BottomLeft, .BottomRight:
-            desiredHeight = initWinSize.height + mdy
-        }
-
-        let desiredSize = CGSize(width: desiredWidth, height: desiredHeight)
+        // Calculate desired size
+        let desiredSize = WindowCalculations.calculateDesiredSize(
+            corner: corner,
+            initialSize: initWinSize,
+            delta: constrainedDelta
+        )
 
         // Set size first - let macOS apply any constraints it wants
         window.size = desiredSize
 
-        // For corners that need position adjustment, read back actual size to ensure anchor point stays fixed
-        // This handles cases where macOS applies minimum size constraints
-        switch corner {
-        case .TopLeft:
-            if let actualSize = window.size {
-                let actualDx = initWinSize.width - actualSize.width
-                let actualDy = initWinSize.height - actualSize.height
-                window.position = CGPoint(x: initWinPos.x + actualDx, y: initWinPos.y + actualDy)
-            }
-        case .TopRight:
-            if let actualSize = window.size {
-                let actualDy = initWinSize.height - actualSize.height
-                window.position = CGPoint(x: initWinPos.x, y: initWinPos.y + actualDy)
-            }
-        case .BottomLeft:
-            if let actualSize = window.size {
-                let actualDx = initWinSize.width - actualSize.width
-                window.position = CGPoint(x: initWinPos.x + actualDx, y: initWinPos.y)
-            }
-        case .BottomRight:
-            // BottomRight only changes size, no position adjustment needed
-            break
+        // Adjust position if needed to keep anchor corner fixed
+        if let actualSize = window.size,
+           let newPosition = WindowCalculations.calculateResizedWindowPosition(
+               corner: corner,
+               initialPosition: initWinPos,
+               initialSize: initWinSize,
+               actualSize: actualSize
+           ) {
+            window.position = newPosition
         }
     }
 
     private func moveWindow(window: AccessibilityElement, mouseDelta: CGPoint) {
-        if let initWinPos = self.initialWindowPosition, let initWinSize = self.initialWindowSize, let frame = self.frame {
-
-            // Throttle updates to 60fps for better performance
-            let now = CACurrentMediaTime()
-            if now - lastUpdateTime < UPDATE_INTERVAL {
-                return
-            }
-            lastUpdateTime = now
-
-            var mdx = mouseDelta.x
-            var mdy = mouseDelta.y
-
-            if shouldConstrainMouseDelta(window, mouseDelta) {
-                let minDx = frame.minX - initWinPos.x
-                let maxDx = frame.maxX - (initWinPos.x + initWinSize.width)
-                let minDy = frame.minY - initWinPos.y
-                let maxDy = frame.maxY - (initWinPos.y + initWinSize.height)
-
-                mdx = min(max(mouseDelta.x, minDx), maxDx)
-                mdy = min(max(mouseDelta.y, minDy), maxDy)
-            }
-            window.position = CGPoint(x: initWinPos.x + mdx, y: initWinPos.y + mdy)
+        guard let initWinPos = self.initialWindowPosition,
+              let initWinSize = self.initialWindowSize,
+              let frame = self.frame else {
+            return
         }
+
+        // Throttle updates to 50fps for better performance
+        let now = CACurrentMediaTime()
+        if now - lastUpdateTime < UPDATE_INTERVAL {
+            return
+        }
+        lastUpdateTime = now
+
+        // Determine if we should constrain based on speed and current position
+        let shouldConstrain = self.shouldConstrainMouseDelta(window)
+
+        // Calculate constrained delta
+        let constrainedDelta = WindowCalculations.calculateConstrainedMoveDelta(
+            mouseDelta: mouseDelta,
+            initialPosition: initWinPos,
+            windowSize: initWinSize,
+            screenFrame: frame,
+            shouldConstrain: shouldConstrain
+        )
+
+        window.position = CGPoint(x: initWinPos.x + constrainedDelta.x, y: initWinPos.y + constrainedDelta.y)
     }
 
-    private func shouldConstrainMouseDelta(_ window: AccessibilityElement, _ mouseDelta: CGPoint) -> Bool {
-        // Slow moves get constrained ONLY if window is currently inside
-        // Once you escape (via fast movement), you stay out even if you slow down
-        let isSlow = self.mouseSpeed < FAST_MOUSE_SPEED_THRESHOLD
-        if !isSlow {
-            return false  // Fast movements are never constrained
-        }
-
-        // Check actual current window position (using API, but only for slow movements)
-        // This is acceptable since we only check during slow movements, not constantly
-        guard let frame = self.frame, let currentPos = window.position, let currentSize = window.size else {
+    private func shouldConstrainMouseDelta(_ window: AccessibilityElement) -> Bool {
+        // Check actual current window position
+        guard let frame = self.frame,
+              let currentPos = window.position,
+              let currentSize = window.size else {
             return false
         }
+
         let currentRect = NSMakeRect(currentPos.x, currentPos.y, currentSize.width, currentSize.height)
-        return frame.contains(currentRect)
+
+        return WindowCalculations.shouldConstrainMovement(
+            mouseSpeed: self.mouseSpeed,
+            speedThreshold: FAST_MOUSE_SPEED_THRESHOLD,
+            currentWindowRect: currentRect,
+            screenFrame: frame
+        )
     }
 
     private func changed(state: FlagState) {
