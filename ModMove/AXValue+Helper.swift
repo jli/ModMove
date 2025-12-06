@@ -1,4 +1,5 @@
 import Foundation
+import ApplicationServices
 
 extension AXValue {
     func toValue<T>() -> T? {

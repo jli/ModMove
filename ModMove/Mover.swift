@@ -164,8 +164,17 @@ final class Mover {
     }
 
     private func windowInsideFrame(_ window: AccessibilityElement, _ frame: CGRect) -> Bool {
-        if let pos = window.position, let size = window.size {
-            return frame.contains(NSMakeRect(pos.x, pos.y, size.width, size.height))
+        // Use cached values instead of querying Accessibility API
+        // This eliminates 120-240 expensive API calls per second during slow moves
+        if let initPos = self.initialWindowPosition, let initSize = self.initialWindowSize,
+           let initMouse = self.initialMousePosition {
+            let currentMousePos = Mouse.currentPosition()
+            let mouseDelta = CGPoint(x: currentMousePos.x - initMouse.x,
+                                     y: currentMousePos.y - initMouse.y)
+            let currentPos = CGPoint(x: initPos.x + mouseDelta.x,
+                                     y: initPos.y + mouseDelta.y)
+            return frame.contains(NSMakeRect(currentPos.x, currentPos.y,
+                                            initSize.width, initSize.height))
         }
         return true
     }
