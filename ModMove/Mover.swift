@@ -79,9 +79,10 @@ final class Mover {
         }
     }
 
-    private func getUsableScreen() -> (NSRect, CGFloat) {
+    private func getUsableScreen(windowPos: CGPoint? = nil) -> (NSRect, CGFloat) {
         // Find the screen that contains the window (supports multi-monitor setups)
-        guard let windowPos = self.initialWindowPosition else {
+        // Use provided position or fall back to initial position
+        guard let pos = windowPos ?? self.initialWindowPosition else {
             // Fallback to main screen if we don't have window position yet
             if let main = NSScreen.main {
                 return (main.visibleFrame, main.backingScaleFactor)
@@ -94,7 +95,7 @@ final class Mover {
         // The Accessibility API uses Cocoa flipped coordinates where y=0 is at the top
         // NSScreen uses standard Cocoa coordinates where y=0 is at the bottom
         let screenHeight = NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
-        let convertedPos = CGPoint(x: windowPos.x, y: screenHeight - windowPos.y)
+        let convertedPos = CGPoint(x: pos.x, y: screenHeight - pos.y)
 
         // Find which screen contains the converted window position
         for screen in NSScreen.screens {
@@ -145,33 +146,35 @@ final class Mover {
             let corner = self.closestCorner, let frame = self.frame {
             var mdx = mouseDelta.x
             var mdy = mouseDelta.y
-            switch corner {
-            case .TopLeft:
-                if shouldConstrainMouseDelta(window, mouseDelta) {
+
+            if shouldConstrainMouseDelta(window, mouseDelta) {
+                switch corner {
+                case .TopLeft:
                     mdx = max(mouseDelta.x, frame.minX - initWinPos.x)
                     mdy = max(mouseDelta.y, frame.minY - initWinPos.y)
+                case .TopRight:
+                    mdx = min(mouseDelta.x, frame.maxX - (initWinPos.x + initWinSize.width))
+                    mdy = max(mouseDelta.y, frame.minY - initWinPos.y)
+                case .BottomLeft:
+                    mdx = max(mouseDelta.x, frame.minX - initWinPos.x)
+                    mdy = min(mouseDelta.y, frame.maxY - (initWinPos.y + initWinSize.height))
+                case .BottomRight:
+                    mdx = min(mouseDelta.x, frame.maxX - (initWinPos.x + initWinSize.width))
+                    mdy = min(mouseDelta.y, frame.maxY - (initWinPos.y + initWinSize.height))
                 }
+            }
+
+            switch corner {
+            case .TopLeft:
                 window.position =  CGPoint(x: initWinPos.x + mdx, y: initWinPos.y + mdy)
                 window.size = CGSize(width: initWinSize.width - mdx, height: initWinSize.height - mdy)
             case .TopRight:
-                if shouldConstrainMouseDelta(window, mouseDelta) {
-                    mdx = min(mouseDelta.x, frame.maxX - (initWinPos.x + initWinSize.width))
-                    mdy = max(mouseDelta.y, frame.minY - initWinPos.y)
-                }
                 window.position = CGPoint(x: initWinPos.x, y: initWinPos.y + mdy)
                 window.size = CGSize(width: initWinSize.width + mdx, height: initWinSize.height - mdy )
             case .BottomLeft:
-                if shouldConstrainMouseDelta(window, mouseDelta) {
-                    mdx = max(mouseDelta.x, frame.minX - initWinPos.x)
-                    mdy = min(mouseDelta.y, frame.maxY - (initWinPos.y + initWinSize.height))
-                }
                 window.position = CGPoint(x: initWinPos.x + mdx, y: initWinPos.y)
                 window.size = CGSize(width: initWinSize.width - mdx, height: initWinSize.height + mdy)
             case .BottomRight:
-                if shouldConstrainMouseDelta(window, mouseDelta) {
-                    mdx = min(mouseDelta.x, frame.maxX - (initWinPos.x + initWinSize.width))
-                    mdy = min(mouseDelta.y, frame.maxY - (initWinPos.y + initWinSize.height))
-                }
                 window.size = CGSize(width: initWinSize.width + mdx, height: initWinSize.height + mdy)
             }
         }
@@ -181,6 +184,7 @@ final class Mover {
         if let initWinPos = self.initialWindowPosition, let initWinSize = self.initialWindowSize, let frame = self.frame {
             var mdx = mouseDelta.x
             var mdy = mouseDelta.y
+
             if shouldConstrainMouseDelta(window, mouseDelta) {
                 let minDx = frame.minX - initWinPos.x
                 let maxDx = frame.maxX - (initWinPos.x + initWinSize.width)
@@ -254,6 +258,8 @@ final class Mover {
         self.prevMousePosition = nil
         self.mouseSpeed = 0
         self.prevTime = CACurrentMediaTime()
+        self.frame = nil
+        self.scaleFactor = nil
     }
 
     private func removeMonitor() {
