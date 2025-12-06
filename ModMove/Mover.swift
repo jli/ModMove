@@ -112,23 +112,29 @@ final class Mover {
         // The Accessibility API uses Cocoa flipped coordinates where y=0 is at the top
         // NSScreen uses standard Cocoa coordinates where y=0 is at the bottom
 
-        // Find which screen contains the window by checking in Accessibility coords
-        // We need to check each screen individually with its own coordinate space
-        for screen in NSScreen.screens {
-            // Convert this screen's frame to Accessibility coords for comparison
-            let screenTop = screen.frame.maxY
-            let screenBottom = screen.frame.minY
-            let accessibilityScreenMinY = screenTop - screen.frame.height  // Top in Accessibility
-            let accessibilityScreenMaxY = screenTop  // Bottom in Accessibility
+        // Find the global max Y to convert NSScreen coords to Accessibility coords
+        // In NSScreen: origin is bottom-left, Y increases upward
+        // In Accessibility: origin is top-left, Y increases downward
+        // We need to find the highest point across all screens
+        let globalMaxY = NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
 
-            // Check if window position is within this screen's Accessibility Y range
+        // Find which screen contains the window by checking in Accessibility coords
+        for screen in NSScreen.screens {
+            // Convert this screen's NSScreen frame to Accessibility coords
+            // For a screen at NSScreen Y from minY to maxY:
+            // - The top in Accessibility is: globalMaxY - maxY
+            // - The bottom in Accessibility is: globalMaxY - minY
+            let accessibilityScreenMinY = globalMaxY - screen.frame.maxY  // Top
+            let accessibilityScreenMaxY = globalMaxY - screen.frame.minY  // Bottom
+
+            // Check if window position is within this screen's bounds
             if pos.x >= screen.frame.minX && pos.x <= screen.frame.maxX &&
                pos.y >= accessibilityScreenMinY && pos.y <= accessibilityScreenMaxY {
-                // Convert visibleFrame from NSScreen coords (bottom-left) to Accessibility coords (top-left)
-                // Use THIS screen's frame for conversion, not a global value
+                // Convert visibleFrame from NSScreen coords to Accessibility coords
+                let accessibilityVisibleMinY = globalMaxY - screen.visibleFrame.maxY
                 let accessibilityFrame = NSRect(
                     x: screen.visibleFrame.minX,
-                    y: screen.frame.maxY - screen.visibleFrame.maxY,  // Top edge in Accessibility coords
+                    y: accessibilityVisibleMinY,
                     width: screen.visibleFrame.width,
                     height: screen.visibleFrame.height
                 )
@@ -138,9 +144,11 @@ final class Mover {
 
         // Fallback to main screen if window position isn't on any screen
         if let main = NSScreen.main {
+            let globalMaxY = NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
+            let accessibilityVisibleMinY = globalMaxY - main.visibleFrame.maxY
             let accessibilityFrame = NSRect(
                 x: main.visibleFrame.minX,
-                y: main.frame.maxY - main.visibleFrame.maxY,
+                y: accessibilityVisibleMinY,
                 width: main.visibleFrame.width,
                 height: main.visibleFrame.height
             )
@@ -198,19 +206,19 @@ final class Mover {
             delta: constrainedDelta
         )
 
-        // Set size first - let macOS apply any constraints it wants
-        window.size = desiredSize
-
-        // Adjust position if needed to keep anchor corner fixed
-        if let actualSize = window.size,
-           let newPosition = WindowCalculations.calculateResizedWindowPosition(
+        // For corners that move the top-left anchor, we must set position BEFORE size
+        // Otherwise macOS will constrain the size based on the old position
+        if let newPosition = WindowCalculations.calculateResizedWindowPosition(
                corner: corner,
                initialPosition: initWinPos,
                initialSize: initWinSize,
-               actualSize: actualSize
+               actualSize: desiredSize  // Use desired size to calculate where position should be
            ) {
             window.position = newPosition
         }
+
+        // Now set size - macOS won't constrain because position is already correct
+        window.size = desiredSize
     }
 
     private func moveWindow(window: AccessibilityElement, mouseDelta: CGPoint) {

@@ -353,4 +353,160 @@ class BoundaryConstraintTests: XCTestCase {
         XCTAssertEqual(result.x, -500, "Fast resize should not be constrained")
         XCTAssertEqual(result.y, -500, "Fast resize should not be constrained")
     }
+
+    // MARK: - Bug: Window at Screen Edge - Should Allow Growth from Opposite Corner
+
+    func testResizeFromTopLeftCorner_WindowAtRightEdge_ShouldAllowLeftwardGrowth() {
+        // Window at top-right screen corner
+        let initialPosition = CGPoint(x: 1600, y: 23)  // Top-left of window
+        let initialSize = CGSize(width: 320, height: 300)
+        // Window's right edge: 1600 + 320 = 1920 (at screen boundary)
+
+        let screenFrame = NSRect(x: 0, y: 23, width: 1920, height: 1057)
+
+        // Resizing from top-left corner, moving mouse LEFT to grow window
+        let mouseDelta = CGPoint(x: -100, y: 0)  // Move left 100px
+        let corner = Corner.TopLeft
+
+        let result = WindowCalculations.calculateConstrainedResizeDelta(
+            mouseDelta: mouseDelta,
+            corner: corner,
+            initialPosition: initialPosition,
+            initialSize: initialSize,
+            screenFrame: screenFrame,
+            shouldConstrain: true
+        )
+
+        // Should NOT be constrained - top-left corner is nowhere near left edge
+        // Window should be able to grow leftward even though right edge is at screen boundary
+        XCTAssertEqual(result.x, -100, "Should allow leftward growth when window is at right edge")
+    }
+
+    func testResizeFromBottomLeftCorner_WindowAtRightEdge_ShouldAllowLeftwardGrowth() {
+        // Window at bottom-right screen corner
+        let initialPosition = CGPoint(x: 1600, y: 780)  // Top-left of window
+        let initialSize = CGSize(width: 320, height: 300)
+        // Window's right edge: 1600 + 320 = 1920 (at screen boundary)
+
+        let screenFrame = NSRect(x: 0, y: 23, width: 1920, height: 1057)
+
+        // Resizing from bottom-left corner, moving mouse LEFT to grow window
+        let mouseDelta = CGPoint(x: -100, y: 0)  // Move left 100px
+        let corner = Corner.BottomLeft
+
+        let result = WindowCalculations.calculateConstrainedResizeDelta(
+            mouseDelta: mouseDelta,
+            corner: corner,
+            initialPosition: initialPosition,
+            initialSize: initialSize,
+            screenFrame: screenFrame,
+            shouldConstrain: true
+        )
+
+        // Should NOT be constrained - bottom-left corner is nowhere near left edge
+        XCTAssertEqual(result.x, -100, "Should allow leftward growth when window is at right edge")
+    }
+
+    func testResizeFromTopRightCorner_WindowAtBottomEdge_ShouldAllowUpwardGrowth() {
+        // Window at bottom-right screen corner
+        let initialPosition = CGPoint(x: 1600, y: 780)  // Top-left of window
+        let initialSize = CGSize(width: 300, height: 300)
+        // Window's bottom edge: 780 + 300 = 1080 (at screen boundary)
+
+        let screenFrame = NSRect(x: 0, y: 23, width: 1920, height: 1057)
+
+        // Resizing from top-right corner, moving mouse UP to grow window
+        let mouseDelta = CGPoint(x: 0, y: -100)  // Move up 100px
+        let corner = Corner.TopRight
+
+        let result = WindowCalculations.calculateConstrainedResizeDelta(
+            mouseDelta: mouseDelta,
+            corner: corner,
+            initialPosition: initialPosition,
+            initialSize: initialSize,
+            screenFrame: screenFrame,
+            shouldConstrain: true
+        )
+
+        // Should NOT be constrained - top-right corner is nowhere near top edge
+        // Note: -100 should NOT be constrained here, but current logic might constrain it
+        XCTAssertEqual(result.y, -100, "Should allow upward growth when window is at bottom edge")
+    }
+
+    func testResizeFromTopLeftCorner_WindowAtBottomRightEdge_ShouldAllowUpwardAndLeftwardGrowth() {
+        // Window at bottom-right screen corner
+        let initialPosition = CGPoint(x: 1600, y: 780)  // Top-left of window
+        let initialSize = CGSize(width: 320, height: 300)
+        // Window's right edge: 1920, bottom edge: 1080 (both at screen boundaries)
+
+        let screenFrame = NSRect(x: 0, y: 23, width: 1920, height: 1057)
+
+        // Resizing from top-left corner, moving mouse UP and LEFT to grow window
+        let mouseDelta = CGPoint(x: -100, y: -100)
+        let corner = Corner.TopLeft
+
+        let result = WindowCalculations.calculateConstrainedResizeDelta(
+            mouseDelta: mouseDelta,
+            corner: corner,
+            initialPosition: initialPosition,
+            initialSize: initialSize,
+            screenFrame: screenFrame,
+            shouldConstrain: true
+        )
+
+        // Should NOT be constrained in either direction
+        XCTAssertEqual(result.x, -100, "Should allow leftward growth when window is at right edge")
+        XCTAssertEqual(result.y, -100, "Should allow upward growth when window is at bottom edge")
+    }
+
+    func testResizeFromBottomLeftCorner_WindowAtBottomRightEdge_ShouldAllowLeftwardGrowth() {
+        // Window at bottom-right screen corner
+        let initialPosition = CGPoint(x: 1600, y: 780)  // Top-left of window
+        let initialSize = CGSize(width: 320, height: 300)
+
+        let screenFrame = NSRect(x: 0, y: 23, width: 1920, height: 1057)
+
+        // Resizing from bottom-left corner, moving mouse LEFT to grow window
+        let mouseDelta = CGPoint(x: -100, y: 0)
+        let corner = Corner.BottomLeft
+
+        let result = WindowCalculations.calculateConstrainedResizeDelta(
+            mouseDelta: mouseDelta,
+            corner: corner,
+            initialPosition: initialPosition,
+            initialSize: initialSize,
+            screenFrame: screenFrame,
+            shouldConstrain: true
+        )
+
+        // Should NOT be constrained - bottom-left corner is far from left edge
+        XCTAssertEqual(result.x, -100, "Should allow leftward growth when window is at right edge")
+    }
+
+    // MARK: - Edge Case: Window Already Partially Off-Screen
+
+    func testResizeFromTopLeftCorner_WindowPastRightEdge_ShouldAllowLeftwardGrowth() {
+        // Window extends past right edge (maybe user threw it there with fast movement)
+        let initialPosition = CGPoint(x: 1700, y: 23)  // Top-left of window
+        let initialSize = CGSize(width: 320, height: 300)
+        // Window's right edge: 1700 + 320 = 2020 (past screen boundary of 1920)
+
+        let screenFrame = NSRect(x: 0, y: 23, width: 1920, height: 1057)
+
+        // Resizing from top-left corner, moving mouse LEFT to grow window
+        let mouseDelta = CGPoint(x: -100, y: 0)  // Move left 100px
+        let corner = Corner.TopLeft
+
+        let result = WindowCalculations.calculateConstrainedResizeDelta(
+            mouseDelta: mouseDelta,
+            corner: corner,
+            initialPosition: initialPosition,
+            initialSize: initialSize,
+            screenFrame: screenFrame,
+            shouldConstrain: true
+        )
+
+        // Should NOT be constrained - top-left corner can still move left from x=1700
+        XCTAssertEqual(result.x, -100, "Should allow leftward growth even when window extends past right edge")
+    }
 }

@@ -235,6 +235,46 @@ Priority 1 (identified but not yet implemented):
 - **Fast execution**: 70 tests run in <0.1 seconds
 - **Regression prevention**: Tests ensure bugs stay fixed
 
+### Testing Limitations & Lessons Learned
+
+**Lesson from 2025-12-06 resize bug**: Pure functional tests are necessary but not sufficient.
+
+**What our tests CAN catch:**
+- Calculation errors in pure functions
+- Logic bugs in WindowCalculations.swift
+- Regressions in mathematical behavior
+- Edge cases in algorithms
+
+**What our tests CANNOT catch:**
+- Order of operations bugs in side effects
+- External system behavior (macOS Accessibility API constraints)
+- Integration issues between components
+- Real-world system interactions
+
+**Example Bug**: Window at screen edge couldn't resize to grow leftward
+- ✅ All calculation tests passed (logic was correct)
+- ❌ Bug was in `Mover.swift` - wrong order of API calls:
+  ```swift
+  // BROKEN: macOS rejects size change because current position + new size > screen
+  window.size = desiredSize
+  window.position = newPosition
+
+  // FIXED: Set position first so macOS allows the size change
+  window.position = newPosition
+  window.size = desiredSize
+  ```
+
+**How we found it:**
+- Debug logging revealed `actualSize ≠ desiredSize`
+- Showed macOS was rejecting our size changes
+- No amount of pure function testing could have caught this
+
+**Takeaway**:
+- Keep the functional core / imperative shell architecture
+- Test the functional core exhaustively (prevents 90% of bugs)
+- Use debug logging + manual testing for orchestration bugs
+- External system behavior must be observed, not just calculated
+
 ## Future Work
 
 ### Build Warnings & Errors
