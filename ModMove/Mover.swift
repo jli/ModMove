@@ -36,6 +36,19 @@ final class Mover {
     private let MOUSE_SPEED_WEIGHT: CGFloat = 0.1
 
     private func mouseMoved(handler: (_ window: AccessibilityElement, _ mouseDelta: CGPoint) -> Void) {
+        // Defensive check: verify modifier keys are still pressed
+        // This prevents stuck drag/resize if flagsChanged event is missed
+        let currentFlags = NSEvent.modifierFlags
+        let hasControl = currentFlags.contains(.control)
+        let hasOption = currentFlags.contains(.option)
+
+        // If modifiers were released, stop immediately
+        if !hasControl || !hasOption {
+            self.removeMonitor()
+            self.resetState()
+            return
+        }
+
         let curMousePos = Mouse.currentPosition()
         if self.window == nil {
             self.window = AccessibilityElement.systemWideElement.element(at: curMousePos)?.window()
