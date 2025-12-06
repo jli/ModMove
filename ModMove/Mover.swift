@@ -89,16 +89,36 @@ final class Mover {
             return (NSRect.zero, 1)
         }
 
-        // Find which screen contains the window's position
+        // Convert window position from Accessibility API coordinates (top-left origin)
+        // to NSScreen coordinates (bottom-left origin)
+        // The Accessibility API uses Cocoa flipped coordinates where y=0 is at the top
+        // NSScreen uses standard Cocoa coordinates where y=0 is at the bottom
+        let screenHeight = NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
+        let convertedPos = CGPoint(x: windowPos.x, y: screenHeight - windowPos.y)
+
+        // Find which screen contains the converted window position
         for screen in NSScreen.screens {
-            if screen.frame.contains(windowPos) {
-                return (screen.visibleFrame, screen.backingScaleFactor)
+            if screen.frame.contains(convertedPos) {
+                // Convert visibleFrame from NSScreen coords (bottom-left) to Accessibility coords (top-left)
+                // In Accessibility coords, y increases downward from the top
+                let accessibilityFrame = NSRect(
+                    x: screen.visibleFrame.minX,
+                    y: screenHeight - screen.visibleFrame.maxY,  // Top edge in Accessibility coords
+                    width: screen.visibleFrame.width,
+                    height: screen.visibleFrame.height
+                )
+                return (accessibilityFrame, screen.backingScaleFactor)
             }
         }
-
         // Fallback to main screen if window position isn't on any screen
         if let main = NSScreen.main {
-            return (main.visibleFrame, main.backingScaleFactor)
+            let accessibilityFrame = NSRect(
+                x: main.visibleFrame.minX,
+                y: screenHeight - main.visibleFrame.maxY,
+                width: main.visibleFrame.width,
+                height: main.visibleFrame.height
+            )
+            return (accessibilityFrame, main.backingScaleFactor)
         }
         return (NSRect.zero, 1)
     }
@@ -162,17 +182,15 @@ final class Mover {
             var mdx = mouseDelta.x
             var mdy = mouseDelta.y
             if shouldConstrainMouseDelta(window, mouseDelta) {
-                let oldMdx = mdx
-                let oldMdy = mdy
-                mdx = min(max(mouseDelta.x, frame.minX - initWinPos.x),
-                          frame.maxX - (initWinPos.x + initWinSize.width))
-                mdy = min(max(mouseDelta.y, frame.minY - initWinPos.y),
-                          frame.maxY - (initWinPos.y + initWinSize.height))
-                // NSLog("CONSTRAINT APPLIED: mdx: %.1f -> %.1f, mdy: %.1f -> %.1f", oldMdx, mdx, oldMdy, mdy)
+                let minDx = frame.minX - initWinPos.x
+                let maxDx = frame.maxX - (initWinPos.x + initWinSize.width)
+                let minDy = frame.minY - initWinPos.y
+                let maxDy = frame.maxY - (initWinPos.y + initWinSize.height)
+
+                mdx = min(max(mouseDelta.x, minDx), maxDx)
+                mdy = min(max(mouseDelta.y, minDy), maxDy)
             }
-            let newPos = CGPoint(x: initWinPos.x + mdx, y: initWinPos.y + mdy)
-            // NSLog("Setting position to: %@", NSStringFromPoint(newPos))
-            window.position = newPos
+            window.position = CGPoint(x: initWinPos.x + mdx, y: initWinPos.y + mdy)
         }
     }
 

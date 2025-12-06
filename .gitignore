@@ -18,13 +18,15 @@
 .LSOverride
 build/
 DerivedData
-Icon
+Icon
 xcuserdata
 # Xcode workspace data
 *.xcworkspace/xcshareddata/
+**/project.xcworkspace/xcshareddata/
 
 # Build artifacts from older versions
 ModMove */
 
 # Claude Code project-specific notes (session-based, not for git)
 .claude/
+modmove.log
