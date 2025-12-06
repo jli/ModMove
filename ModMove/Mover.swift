@@ -75,15 +75,30 @@ final class Mover {
             self.mouseSpeed = latestMouseSpeed * MOUSE_SPEED_WEIGHT + self.mouseSpeed * (1 - MOUSE_SPEED_WEIGHT)
             self.prevMousePosition = curMousePos
             self.prevTime = now
-            // NSLog("timeD: %.3f\tmouseD: %.1f\tmouseSpeed: %.1f", timeDiff, mouseDist, scale, self.mouseSpeed)
+            // NSLog("mouseSpeed: %.1f (threshold: %.1f)", self.mouseSpeed, FAST_MOUSE_SPEED_THRESHOLD)
         }
     }
 
     private func getUsableScreen() -> (NSRect, CGFloat) {
-        if var visible = NSScreen.main?.visibleFrame, let full = NSScreen.main?.frame, let scale = NSScreen.main?.backingScaleFactor {
-            // For some reason, visibleFrame still has minY = 0 even though the menubar is there?
-            visible.origin.y = full.size.height - visible.size.height
-            return (visible, scale)
+        // Find the screen that contains the window (supports multi-monitor setups)
+        guard let windowPos = self.initialWindowPosition else {
+            // Fallback to main screen if we don't have window position yet
+            if let main = NSScreen.main {
+                return (main.visibleFrame, main.backingScaleFactor)
+            }
+            return (NSRect.zero, 1)
+        }
+
+        // Find which screen contains the window's position
+        for screen in NSScreen.screens {
+            if screen.frame.contains(windowPos) {
+                return (screen.visibleFrame, screen.backingScaleFactor)
+            }
+        }
+
+        // Fallback to main screen if window position isn't on any screen
+        if let main = NSScreen.main {
+            return (main.visibleFrame, main.backingScaleFactor)
         }
         return (NSRect.zero, 1)
     }
@@ -147,21 +162,35 @@ final class Mover {
             var mdx = mouseDelta.x
             var mdy = mouseDelta.y
             if shouldConstrainMouseDelta(window, mouseDelta) {
+                let oldMdx = mdx
+                let oldMdy = mdy
                 mdx = min(max(mouseDelta.x, frame.minX - initWinPos.x),
                           frame.maxX - (initWinPos.x + initWinSize.width))
                 mdy = min(max(mouseDelta.y, frame.minY - initWinPos.y),
                           frame.maxY - (initWinPos.y + initWinSize.height))
+                // NSLog("CONSTRAINT APPLIED: mdx: %.1f -> %.1f, mdy: %.1f -> %.1f", oldMdx, mdx, oldMdy, mdy)
             }
-            window.position = CGPoint(x: initWinPos.x + mdx, y: initWinPos.y + mdy)
+            let newPos = CGPoint(x: initWinPos.x + mdx, y: initWinPos.y + mdy)
+            // NSLog("Setting position to: %@", NSStringFromPoint(newPos))
+            window.position = newPos
         }
     }
 
     private func shouldConstrainMouseDelta(_ window: AccessibilityElement, _ mouseDelta: CGPoint) -> Bool {
-        // Slow moves get constrained. But once a window is out of the frame, we don't constrain it anymore.
-        if let frame = self.frame {
-            return self.mouseSpeed < FAST_MOUSE_SPEED_THRESHOLD && windowInsideFrame(window, frame)
+        // Slow moves get constrained ONLY if window is currently inside
+        // Once you escape (via fast movement), you stay out even if you slow down
+        let isSlow = self.mouseSpeed < FAST_MOUSE_SPEED_THRESHOLD
+        if !isSlow {
+            return false  // Fast movements are never constrained
         }
-        return false
+
+        // Check actual current window position (using API, but only for slow movements)
+        // This is acceptable since we only check during slow movements, not constantly
+        guard let frame = self.frame, let currentPos = window.position, let currentSize = window.size else {
+            return false
+        }
+        let currentRect = NSMakeRect(currentPos.x, currentPos.y, currentSize.width, currentSize.height)
+        return frame.contains(currentRect)
     }
 
     private func windowInsideFrame(_ window: AccessibilityElement, _ frame: CGRect) -> Bool {
@@ -174,8 +203,8 @@ final class Mover {
                                      y: currentMousePos.y - initMouse.y)
             let currentPos = CGPoint(x: initPos.x + mouseDelta.x,
                                      y: initPos.y + mouseDelta.y)
-            return frame.contains(NSMakeRect(currentPos.x, currentPos.y,
-                                            initSize.width, initSize.height))
+            let windowRect = NSMakeRect(currentPos.x, currentPos.y, initSize.width, initSize.height)
+            return frame.contains(windowRect)
         }
         return true
     }

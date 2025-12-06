@@ -25,3 +25,6 @@ xcuserdata
 
 # Build artifacts from older versions
 ModMove */
+
+# Claude Code project-specific notes (session-based, not for git)
+.claude/
