@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import QuartzCore
 
 enum Corner {
     case TopLeft
@@ -27,7 +28,7 @@ final class Mover {
     private var scaleFactor: CGFloat?
 
     private var prevMousePosition: CGPoint?
-    private var prevDate: Date = Date()
+    private var prevTime: CFTimeInterval = CACurrentMediaTime()
     // Mouse speed is in pixels/second.
     private var mouseSpeed: CGFloat = 0
     private let FAST_MOUSE_SPEED_THRESHOLD: CGFloat = 1000
@@ -68,12 +69,12 @@ final class Mover {
             let mouseDist: CGFloat = sqrt(
                 pow((curMousePos.x - prevMousePos.x) / scale, 2)
                 + pow((curMousePos.y - prevMousePos.y) / scale, 2))
-            let now = Date()
-            let timeDiff: CGFloat = CGFloat(now.timeIntervalSince(prevDate))
+            let now = CACurrentMediaTime()
+            let timeDiff: CGFloat = CGFloat(now - prevTime)
             let latestMouseSpeed = mouseDist / timeDiff
             self.mouseSpeed = latestMouseSpeed * MOUSE_SPEED_WEIGHT + self.mouseSpeed * (1 - MOUSE_SPEED_WEIGHT)
             self.prevMousePosition = curMousePos
-            self.prevDate = now
+            self.prevTime = now
             // NSLog("timeD: %.3f\tmouseD: %.1f\tmouseSpeed: %.1f", timeDiff, mouseDist, scale, self.mouseSpeed)
         }
     }
@@ -203,6 +204,9 @@ final class Mover {
         self.initialWindowSize = nil
         self.closestCorner = nil
         self.window = nil
+        self.prevMousePosition = nil
+        self.mouseSpeed = 0
+        self.prevTime = CACurrentMediaTime()
     }
 
     private func removeMonitor() {
