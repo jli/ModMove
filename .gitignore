@@ -20,3 +20,8 @@ build/
 DerivedData
 Icon
 xcuserdata
+# Xcode workspace data
+*.xcworkspace/xcshareddata/
+
+# Build artifacts from older versions
+ModMove */
