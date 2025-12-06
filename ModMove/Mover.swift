@@ -35,9 +35,9 @@ final class Mover {
     // Weight given to latest mouse speed for averaging.
     private let MOUSE_SPEED_WEIGHT: CGFloat = 0.1
 
-    // Throttle position updates to 40fps for better performance with heavy apps
+    // Throttle position updates to 50fps for better performance with heavy apps
     private var lastUpdateTime: CFTimeInterval = 0
-    private let UPDATE_INTERVAL: CFTimeInterval = 0.025  // ~40fps (25ms)
+    private let UPDATE_INTERVAL: CFTimeInterval = 0.020  // ~50fps (20ms)
 
     private func mouseMoved(handler: (_ window: AccessibilityElement, _ mouseDelta: CGPoint) -> Void) {
         // Defensive check: verify modifier keys are still pressed
