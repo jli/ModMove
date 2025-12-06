@@ -26,6 +26,10 @@ final class Mover {
     private var window: AccessibilityElement?
     private var frame: NSRect?
     private var scaleFactor: CGFloat?
+    // Cache screen height for coordinate conversions (doesn't change during runtime)
+    private lazy var screenHeight: CGFloat = {
+        return NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
+    }()
 
     private var prevMousePosition: CGPoint?
     private var prevTime: CFTimeInterval = CACurrentMediaTime()
@@ -107,8 +111,7 @@ final class Mover {
         // to NSScreen coordinates (bottom-left origin)
         // The Accessibility API uses Cocoa flipped coordinates where y=0 is at the top
         // NSScreen uses standard Cocoa coordinates where y=0 is at the bottom
-        let screenHeight = NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
-        let convertedPos = CGPoint(x: pos.x, y: screenHeight - pos.y)
+        let convertedPos = CGPoint(x: pos.x, y: self.screenHeight - pos.y)
 
         // Find which screen contains the converted window position
         for screen in NSScreen.screens {
@@ -117,7 +120,7 @@ final class Mover {
                 // In Accessibility coords, y increases downward from the top
                 let accessibilityFrame = NSRect(
                     x: screen.visibleFrame.minX,
-                    y: screenHeight - screen.visibleFrame.maxY,  // Top edge in Accessibility coords
+                    y: self.screenHeight - screen.visibleFrame.maxY,  // Top edge in Accessibility coords
                     width: screen.visibleFrame.width,
                     height: screen.visibleFrame.height
                 )
@@ -128,7 +131,7 @@ final class Mover {
         if let main = NSScreen.main {
             let accessibilityFrame = NSRect(
                 x: main.visibleFrame.minX,
-                y: screenHeight - main.visibleFrame.maxY,
+                y: self.screenHeight - main.visibleFrame.maxY,
                 width: main.visibleFrame.width,
                 height: main.visibleFrame.height
             )
@@ -226,22 +229,6 @@ final class Mover {
         }
         let currentRect = NSMakeRect(currentPos.x, currentPos.y, currentSize.width, currentSize.height)
         return frame.contains(currentRect)
-    }
-
-    private func windowInsideFrame(_ window: AccessibilityElement, _ frame: CGRect) -> Bool {
-        // Use cached values instead of querying Accessibility API
-        // This eliminates 120-240 expensive API calls per second during slow moves
-        if let initPos = self.initialWindowPosition, let initSize = self.initialWindowSize,
-           let initMouse = self.initialMousePosition {
-            let currentMousePos = Mouse.currentPosition()
-            let mouseDelta = CGPoint(x: currentMousePos.x - initMouse.x,
-                                     y: currentMousePos.y - initMouse.y)
-            let currentPos = CGPoint(x: initPos.x + mouseDelta.x,
-                                     y: initPos.y + mouseDelta.y)
-            let windowRect = NSMakeRect(currentPos.x, currentPos.y, initSize.width, initSize.height)
-            return frame.contains(windowRect)
-        }
-        return true
     }
 
     private func changed(state: FlagState) {
