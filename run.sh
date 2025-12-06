@@ -8,20 +8,16 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Generate version from current date/time (e.g., v1206-1755)
-VERSION="${1:-v$(date +%m%d-%H%M)}"
-APP_NAME="ModMove-jli-${VERSION}"
 BUILD_DIR="$(pwd)/build"
 APP_PATH="${BUILD_DIR}/ModMove.app"
-DEST_PATH="/Applications/${APP_NAME}.app"
 
-echo -e "${BLUE}=== ModMove Build, Deploy & Run ===${NC}"
+echo -e "${BLUE}=== ModMove Debug Run ===${NC}"
+echo -e "${BLUE}(Runs from build directory - use ./deploy.sh for stable releases)${NC}"
 echo ""
 
-# Step 1: Check for running instances BEFORE building
-echo -e "${YELLOW}[1/5] Checking for existing ModMove instances...${NC}"
-# Look specifically for the ModMove binary in /Applications (not terminals, editors, etc.)
-EXISTING_PROCS=$(ps aux | grep "/Applications/ModMove.*\.app/Contents/MacOS/ModMove" | grep -v grep || true)
+# Step 1: Check for running instances
+echo -e "${YELLOW}[1/4] Checking for existing ModMove instances...${NC}"
+EXISTING_PROCS=$(ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep || true)
 if [ -n "$EXISTING_PROCS" ]; then
     echo "Found running instances:"
     echo "$EXISTING_PROCS" | awk '{print "  PID " $2 ": " $11}'
@@ -32,7 +28,7 @@ else
 fi
 
 # Step 2: Build
-echo -e "${YELLOW}[2/5] Building ModMove (Release configuration)...${NC}"
+echo -e "${YELLOW}[2/4] Building ModMove (Release configuration)...${NC}"
 xcodebuild -project ModMove.xcodeproj \
     -scheme ModMove \
     -configuration Release \
@@ -47,9 +43,9 @@ fi
 echo -e "${GREEN}  Build complete!${NC}"
 echo ""
 
-# Step 3: Kill existing instances (only the actual app binary, not terminals/editors)
-echo -e "${YELLOW}[3/5] Stopping all ModMove instances...${NC}"
-MODMOVE_PIDS=$(ps aux | grep "/Applications/ModMove.*\.app/Contents/MacOS/ModMove" | grep -v grep | awk '{print $2}')
+# Step 3: Kill existing instances
+echo -e "${YELLOW}[3/4] Stopping all ModMove instances...${NC}"
+MODMOVE_PIDS=$(ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep | awk '{print $2}')
 if [ -n "$MODMOVE_PIDS" ]; then
     echo "$MODMOVE_PIDS" | while read -r pid; do
         echo "  Killing PID $pid"
@@ -62,38 +58,15 @@ else
 fi
 echo ""
 
-# Step 4: Deploy
-echo -e "${YELLOW}[4/5] Deploying to /Applications/${APP_NAME}.app...${NC}"
-
-# Clean up old versions (keep only last 3)
-OLD_VERSIONS=$(ls -dt /Applications/ModMove-jli-*.app 2>/dev/null | tail -n +4 || true)
-if [ -n "$OLD_VERSIONS" ]; then
-    echo "  Cleaning up old versions..."
-    echo "$OLD_VERSIONS" | while read -r old_app; do
-        echo "    Removing: $(basename "$old_app")"
-        rm -rf "$old_app"
-    done
-fi
-
-# Remove existing version if it exists
-if [ -d "$DEST_PATH" ]; then
-    rm -rf "$DEST_PATH"
-fi
-
-# Copy to Applications
-cp -R "$APP_PATH" "$DEST_PATH"
-echo -e "${GREEN}  Deployed to ${DEST_PATH}${NC}"
-echo ""
-
-# Step 5: Launch and verify
-echo -e "${YELLOW}[5/5] Launching ModMove and verifying...${NC}"
-open "$DEST_PATH"
+# Step 4: Launch from build directory and verify
+echo -e "${YELLOW}[4/4] Launching ModMove from ${APP_PATH}...${NC}"
+open "$APP_PATH"
 sleep 2
 
-# Verify exactly one instance is running (only check actual app binary)
+# Verify exactly one instance is running
 echo ""
 echo -e "${BLUE}Process verification:${NC}"
-RUNNING_PROCS=$(ps aux | grep "/Applications/ModMove.*\.app/Contents/MacOS/ModMove" | grep -v grep || true)
+RUNNING_PROCS=$(ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep || true)
 
 if [ -z "$RUNNING_PROCS" ]; then
     echo -e "${RED}  ERROR: No ModMove instances running!${NC}"
@@ -112,32 +85,14 @@ echo "Running instances:"
 echo "$RUNNING_PROCS" | while read -r line; do
     PID=$(echo "$line" | awk '{print $2}')
     BINARY_PATH=$(echo "$line" | awk '{print $11}')
-
-    # Check if it's our version
-    if [[ "$BINARY_PATH" == *"$APP_NAME"* ]]; then
-        echo -e "  ${GREEN}PID $PID: $BINARY_PATH [CURRENT VERSION]${NC}"
-    else
-        echo -e "  ${YELLOW}PID $PID: $BINARY_PATH [OLD VERSION]${NC}"
-    fi
+    echo -e "  ${GREEN}PID $PID: $BINARY_PATH${NC}"
 done
 
 echo ""
 echo -e "${GREEN}=== Complete! ===${NC}"
 echo ""
-echo "Deployed version: ${APP_NAME}"
-echo "Location: ${DEST_PATH}"
+echo "Running from: ${APP_PATH}"
 echo ""
-
-# Show running versions summary
-ALL_VERSIONS=$(ls -t /Applications/ModMove-jli-*.app 2>/dev/null || true)
-if [ -n "$ALL_VERSIONS" ]; then
-    echo "Installed versions in /Applications:"
-    echo "$ALL_VERSIONS" | while read -r app_path; do
-        app_name=$(basename "$app_path" .app)
-        if [ "$app_path" = "$DEST_PATH" ]; then
-            echo -e "  ${GREEN}$app_name [LATEST]${NC}"
-        else
-            echo "  $app_name"
-        fi
-    done
-fi
+echo "Tips:"
+echo "  ./logs.sh               - Stream debug logs"
+echo "  ./deploy.sh [version]   - Deploy stable version to /Applications"
