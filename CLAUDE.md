@@ -275,19 +275,16 @@ Priority 1 (identified but not yet implemented):
 - Use debug logging + manual testing for orchestration bugs
 - External system behavior must be observed, not just calculated
 
+## Build Configuration
+
+### Deployment Target
+
+- **Current**: macOS 10.13 (High Sierra, 2017)
+- **Reasoning**: Updated from 10.11 to match Xcode's minimum supported version
+- **Impact**: Maintains excellent backwards compatibility (8+ years) while ensuring clean builds
+- **Changed**: 2025-12-06 - No code changes required, Info.plist uses `$(MACOSX_DEPLOYMENT_TARGET)` variable
+
 ## Future Work
-
-### Build Warnings & Errors
-
-**Problem**: The codebase currently has build warnings and potential deprecation errors.
-
-**Tasks**:
-- Review and fix Xcode build warnings
-- Address deprecated API usage
-- Ensure compatibility with current macOS SDK
-- Consider updating deployment target from 10.11 to 10.13 (current Xcode minimum)
-
-**Priority**: Medium - doesn't affect functionality but improves code quality
 
 ### Potential Enhancements
 
