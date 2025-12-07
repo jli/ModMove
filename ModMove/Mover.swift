@@ -42,43 +42,64 @@ final class Mover {
     private func mouseMoved(handler: (_ window: AccessibilityElement, _ mouseDelta: CGPoint) -> Void) {
         // Defensive check: verify modifier keys are still pressed
         // This prevents stuck drag/resize if flagsChanged event is missed
-        let currentFlags = NSEvent.modifierFlags
-        let hasControl = currentFlags.contains(.control)
-        let hasOption = currentFlags.contains(.option)
+        // IMPORTANT: Only check this AFTER we've grabbed a window, not before
+        // Otherwise we might reset mid-gesture and grab a different window
+        if self.window != nil {
+            let currentFlags = NSEvent.modifierFlags
+            let hasControl = currentFlags.contains(.control)
+            let hasOption = currentFlags.contains(.option)
 
-        // If modifiers were released, stop immediately
-        if !hasControl || !hasOption {
-            self.removeMonitor()
-            self.resetState()
-            return
-        }
-
-        let curMousePos = Mouse.currentPosition()
-        if self.window == nil {
-            self.window = AccessibilityElement.systemWideElement.element(at: curMousePos)?.window()
-        }
-        guard let window = self.window else {
-            return
-        }
-
-        if self.initialMousePosition == nil {
-            self.prevMousePosition = curMousePos
-            self.initialMousePosition = curMousePos
-            self.initialWindowPosition = window.position
-            self.initialWindowSize = window.size
-            self.closestCorner = self.getClosestCorner(window: window, mouse: curMousePos)
-            (self.frame, self.scaleFactor) = getUsableScreen()
-
-            let currentPid = NSRunningApplication.current.processIdentifier
-            if let pid = window.pid(), pid != currentPid {
-                NSRunningApplication(processIdentifier: pid)?.activate(options: .activateIgnoringOtherApps)
+            // If modifiers were released, stop immediately
+            if !hasControl || !hasOption {
+                self.removeMonitor()
+                self.resetState()
+                return
             }
-            window.bringToFront()
-        } else if let initMousePos = self.initialMousePosition {
-            self.trackMouseSpeed(curMousePos: curMousePos)
-            let mouseDelta = CGPoint(x: curMousePos.x - initMousePos.x, y: curMousePos.y - initMousePos.y)
-            handler(window, mouseDelta)
         }
+
+        // On first call: grab window and initial mouse position atomically
+        // This prevents race condition where mouse moves before we grab the window
+        if self.window == nil {
+            let initialMousePos = Mouse.currentPosition()
+            self.window = AccessibilityElement.systemWideElement.element(at: initialMousePos)?.window()
+
+            if let window = self.window {
+                let appName = window.pid().flatMap { NSRunningApplication(processIdentifier: $0)?.localizedName } ?? "unknown"
+                NSLog("[ModMove] Got window - app: %@, pid: %d, pos: %@, size: %@, mouse: %@",
+                      appName,
+                      window.pid() ?? -1,
+                      NSStringFromPoint(window.position ?? .zero),
+                      NSStringFromSize(window.size ?? .zero),
+                      NSStringFromPoint(initialMousePos))
+
+                // Initialize all state atomically with the same mouse position
+                self.prevMousePosition = initialMousePos
+                self.initialMousePosition = initialMousePos
+                self.initialWindowPosition = window.position
+                self.initialWindowSize = window.size
+                self.closestCorner = self.getClosestCorner(window: window, mouse: initialMousePos)
+                (self.frame, self.scaleFactor) = getUsableScreen()
+
+                let currentPid = NSRunningApplication.current.processIdentifier
+                if let pid = window.pid(), pid != currentPid {
+                    NSRunningApplication(processIdentifier: pid)?.activate(options: .activateIgnoringOtherApps)
+                }
+                window.bringToFront()
+            } else {
+                NSLog("[ModMove] Failed to get window at mouse position: %@", NSStringFromPoint(initialMousePos))
+            }
+            return
+        }
+
+        guard let window = self.window, let initMousePos = self.initialMousePosition else {
+            return
+        }
+
+        // On subsequent calls: track mouse movement and update window
+        let curMousePos = Mouse.currentPosition()
+        self.trackMouseSpeed(curMousePos: curMousePos)
+        let mouseDelta = CGPoint(x: curMousePos.x - initMousePos.x, y: curMousePos.y - initMousePos.y)
+        handler(window, mouseDelta)
     }
 
     private func trackMouseSpeed(curMousePos: CGPoint) {
@@ -206,19 +227,57 @@ final class Mover {
             delta: constrainedDelta
         )
 
-        // For corners that move the top-left anchor, we must set position BEFORE size
-        // Otherwise macOS will constrain the size based on the old position
-        if let newPosition = WindowCalculations.calculateResizedWindowPosition(
-               corner: corner,
-               initialPosition: initWinPos,
-               initialSize: initWinSize,
-               actualSize: desiredSize  // Use desired size to calculate where position should be
-           ) {
-            window.position = newPosition
-        }
+        // CRITICAL: Avoid stutter at minimum size by only updating position when size actually changes
+        // Strategy: Try size change first, then update position based on what actually happened
 
-        // Now set size - macOS won't constrain because position is already correct
-        window.size = desiredSize
+        let needsPositionUpdate = (corner == .TopLeft || corner == .TopRight || corner == .BottomLeft)
+        let currentSize = window.size ?? initWinSize
+
+        // Special handling for corners that need position updates
+        if needsPositionUpdate {
+            // For screen-edge resize bug: optimistically set position first
+            // But ONLY if we're not already stuck at minimum size
+            let epsilon: CGFloat = 0.1
+
+            // Check if this resize would make the window smaller
+            let isGrowing = (desiredSize.width > currentSize.width || desiredSize.height > currentSize.height)
+
+            if isGrowing {
+                // Growing: safe to update position first (no minimum size constraint)
+                if let newPosition = WindowCalculations.calculateResizedWindowPosition(
+                       corner: corner,
+                       initialPosition: initWinPos,
+                       initialSize: initWinSize,
+                       actualSize: desiredSize
+                   ) {
+                    window.position = newPosition
+                }
+            }
+
+            // Set size - macOS may clamp to minimum
+            window.size = desiredSize
+
+            // Read back actual size and adjust position if needed
+            if let actualSize = window.size {
+                let sizeChanged = abs(actualSize.width - currentSize.width) > epsilon ||
+                                abs(actualSize.height - currentSize.height) > epsilon
+
+                // If shrinking or size changed, recalculate position based on actual size
+                if !isGrowing || sizeChanged {
+                    if let correctedPosition = WindowCalculations.calculateResizedWindowPosition(
+                           corner: corner,
+                           initialPosition: initWinPos,
+                           initialSize: initWinSize,
+                           actualSize: actualSize
+                       ) {
+                        window.position = correctedPosition
+                    }
+                }
+            }
+        } else {
+            // BottomRight: only changes size, no position adjustment needed
+            window.size = desiredSize
+        }
     }
 
     private func moveWindow(window: AccessibilityElement, mouseDelta: CGPoint) {
@@ -269,8 +328,36 @@ final class Mover {
     }
 
     private func changed(state: FlagState) {
+        // Allow mode switching mid-gesture (e.g., shift key pressed/released while dragging)
+        // But keep the same window
+        let shouldKeepWindow = (self.window != nil && state != .Ignore)
+
+        // Always remove old monitor
         self.removeMonitor()
-        self.resetState()
+
+        // If switching modes mid-gesture, reset initial positions to current state
+        // This prevents jump because our reference point is now where the window currently is
+        if shouldKeepWindow && state != .Ignore {
+            if let window = self.window {
+                let currentMousePos = Mouse.currentPosition()
+
+                // Update all initial values to current state
+                self.initialMousePosition = currentMousePos
+                self.initialWindowPosition = window.position
+                self.initialWindowSize = window.size
+
+                // Recalculate closest corner based on current mouse position
+                self.closestCorner = self.getClosestCorner(window: window, mouse: currentMousePos)
+
+                // Update screen frame in case we moved to a different monitor
+                (self.frame, self.scaleFactor) = getUsableScreen(windowPos: window.position)
+            }
+        }
+
+        // Only reset state if releasing keys (going to .Ignore)
+        if !shouldKeepWindow {
+            self.resetState()
+        }
 
         switch state {
         case .Resize:

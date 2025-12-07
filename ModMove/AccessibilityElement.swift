@@ -84,7 +84,10 @@ final class AccessibilityElement {
 
     private func set(position: CGPoint) {
         if let value = AXValue.from(value: position, type: .cgPoint) {
-            AXUIElementSetAttributeValue(self.elementRef, kAXPositionAttribute as CFString, value)
+            let error = AXUIElementSetAttributeValue(self.elementRef, kAXPositionAttribute as CFString, value)
+            if error != .success {
+                NSLog("[ModMove] Failed to set position to %@ - error: %d", NSStringFromPoint(position), error.rawValue)
+            }
         }
     }
 
@@ -94,7 +97,10 @@ final class AccessibilityElement {
 
     private func set(size: CGSize) {
         if let value = AXValue.from(value: size, type: .cgSize) {
-            AXUIElementSetAttributeValue(self.elementRef, kAXSizeAttribute as CFString, value)
+            let error = AXUIElementSetAttributeValue(self.elementRef, kAXSizeAttribute as CFString, value)
+            if error != .success {
+                NSLog("[ModMove] Failed to set size to %@ - error: %d", NSStringFromSize(size), error.rawValue)
+            }
         }
     }
 
