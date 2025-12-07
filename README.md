@@ -48,17 +48,31 @@ On first launch, macOS will prompt you to grant Accessibility permissions:
 
 ## Development
 
-### Build Scripts
+### Quick Commands (Make)
 
-- `build.sh` - Builds a Release version to `build/ModMove.app`
-- `deploy.sh [version]` - Deploys to `/Applications/ModMove-jli-[version].app`
+```bash
+make run      # Build and run (debug mode)
+make test     # Run test suite
+make logs     # Stream debug logs
+make deploy   # Deploy to /Applications
+make clean    # Clean build artifacts
+make help     # Show all commands
+```
+
+### Shell Scripts
+
+- `./run.sh` - Build and run with process verification
+- `./logs.sh` - Stream debug logs
+- `./deploy.sh [version]` - Deploy to `/Applications/ModMove-jli-[version].app`
 
 ### Project Structure
 
-- `ModMove/Mover.swift` - Core window manipulation logic
+- `ModMove/Mover.swift` - Core window manipulation orchestration
+- `ModMove/WindowCalculations.swift` - Pure functional core (70+ tests)
 - `ModMove/Observer.swift` - Keyboard modifier monitoring
 - `ModMove/AccessibilityElement.swift` - Accessibility API wrapper
-- See `.claude/CLAUDE.md` for detailed project documentation
+- `ModMoveTests/` - Test suite (76 tests, TDD workflow)
+- See `CLAUDE.md` for detailed developer guide
 
 ## Performance
 
