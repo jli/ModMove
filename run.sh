@@ -43,16 +43,28 @@ fi
 echo -e "${GREEN}  Build complete!${NC}"
 echo ""
 
-# Step 3: Kill existing instances
+# Step 3: Kill ALL existing ModMove instances (everywhere)
 echo -e "${YELLOW}[3/4] Stopping all ModMove instances...${NC}"
 MODMOVE_PIDS=$(ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep | awk '{print $2}')
 if [ -n "$MODMOVE_PIDS" ]; then
     echo "$MODMOVE_PIDS" | while read -r pid; do
-        echo "  Killing PID $pid"
+        BINARY_PATH=$(ps -p "$pid" -o command= 2>/dev/null | awk '{print $1}')
+        echo "  Killing PID $pid: $BINARY_PATH"
         kill "$pid" 2>/dev/null || true
     done
     sleep 1
-    echo -e "${GREEN}  Stopped existing instances${NC}"
+
+    # Verify all are stopped, force kill if needed
+    REMAINING=$(ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep | awk '{print $2}')
+    if [ -n "$REMAINING" ]; then
+        echo -e "${YELLOW}  Force killing remaining instances...${NC}"
+        echo "$REMAINING" | while read -r pid; do
+            echo "    Force killing PID $pid"
+            kill -9 "$pid" 2>/dev/null || true
+        done
+        sleep 1
+    fi
+    echo -e "${GREEN}  Stopped all instances${NC}"
 else
     echo "  No instances to stop"
 fi

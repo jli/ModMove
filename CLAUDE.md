@@ -284,6 +284,27 @@ Priority 1 (identified but not yet implemented):
 - **Impact**: Maintains excellent backwards compatibility (8+ years) while ensuring clean builds
 - **Changed**: 2025-12-06 - No code changes required, Info.plist uses `$(MACOSX_DEPLOYMENT_TARGET)` variable
 
+## Known Issues & Debugging
+
+### Multiple Instance Bug
+
+**Symptom:** Multiple windows resize/move simultaneously during a single gesture.
+
+**Cause:** Multiple ModMove instances running (e.g., one in `/Applications`, one in `build/`).
+
+**Fix:**
+```bash
+# Kill ALL ModMove instances
+ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep | awk '{print $2}' | xargs kill
+```
+
+**Prevention:** Use `./run.sh` which now kills ALL instances before launching a new one.
+
+**Why it happens:**
+- Each instance monitors keyboard shortcuts independently
+- When you trigger the gesture, multiple instances each grab a different window
+- Both windows appear to move together, but it's actually two separate instances
+
 ## Future Work
 
 ### Potential Enhancements
