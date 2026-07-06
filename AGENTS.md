@@ -1,6 +1,6 @@
-# ModMove - Developer Guide for Claude Code
+# ModMove - Developer Guide
 
-Team-shared guide for AI-assisted development on ModMove. This file is checked into git and should contain information useful to all developers.
+Team-shared guide for AI-assisted development on ModMove. This file is checked into git and should contain information useful to all developers and coding agents. (`CLAUDE.md` is a pointer to this file.)
 
 ## Project Overview
 
@@ -16,7 +16,7 @@ This replicates behavior from Linux window managers (and HyperDock on Mac).
 ### Technology Stack
 
 - **Language**: Swift 4.0 (with small Objective-C bridging layer)
-- **Platform**: macOS 10.11+
+- **Platform**: macOS 10.13+
 - **Build System**: Xcode
 - **Key APIs**: macOS Accessibility API (AXUIElement)
 - **App Type**: Menu bar utility (no dock icon, runs in background)
@@ -35,13 +35,21 @@ ModMove/
 │   ├── AccessibilityHelper.swift      # Permission requests
 │   ├── AXValue+Helper.swift           # Type conversion helpers
 │   ├── LoginController.h/m            # Launch-at-login (Objective-C)
-│   └── LoginAlert.swift               # User prompt for login items
-├── ModMoveTests/                      # Test suite (70 tests)
+│   ├── LoginAlert.swift               # User prompt for login items
+│   └── Resources/                     # App resources
+├── ModMoveTests/                      # Test suite (83 tests)
 │   ├── CornerDetectionTests.swift
 │   ├── BoundaryConstraintTests.swift
 │   ├── SpeedBasedBehaviorTests.swift
-│   └── PositionSizeCalculationTests.swift
+│   ├── PositionSizeCalculationTests.swift
+│   └── ScreenCoordinateTests.swift
 ├── ModMove.xcodeproj/                 # Xcode build configuration
+├── Makefile                           # make run/test/logs/deploy/clean
+├── build.sh / deploy.sh / run.sh      # Build & deployment scripts (see SCRIPTS.md)
+├── logs.sh                            # Stream debug logs
+├── SCRIPTS.md                         # Script reference
+├── CHANGELOG.md                       # Fork changelog
+├── PERFORMANCE_ANALYSIS.md            # Performance analysis
 └── README.md                          # User-facing documentation
 ```
 
@@ -85,11 +93,11 @@ ModMove/
    - Update `Mover.swift` only when necessary (stateful/side effects)
 
 3. **Verify tests pass**
-   - Run test suite: `xcodebuild test -scheme ModMove -destination 'platform=macOS'`
-   - All 70+ tests should pass
+   - Run test suite: `xcodebuild test -scheme ModMove -destination 'platform=macOS'` (or `make test`)
+   - All 83+ tests should pass
 
 4. **Only then test in real life**
-   - Build and run the app: `xcodebuild -scheme ModMove build`
+   - Build, deploy, and run the app: `./run.sh`
    - Manually verify the fix works as expected
    - Test edge cases and interaction with other features
 
@@ -99,24 +107,27 @@ This workflow ensures:
 - Refactoring is safe
 - Code quality improves over time
 
-### Building
+### Building & Running
 
 ```bash
-# Command line
-xcodebuild -scheme ModMove build
+# Recommended: build, deploy, and run in one step (kills stale instances)
+./run.sh
 
-# Or in Xcode
-# Open ModMove.xcodeproj and press Cmd+B
+# Build only
+xcodebuild -scheme ModMove build   # or ./build.sh (Release)
+
+# Or in Xcode: open ModMove.xcodeproj and press Cmd+B
 ```
+
+See `SCRIPTS.md` for the full script reference (`build.sh`, `deploy.sh`, `run.sh`, `logs.sh`, `Makefile` targets).
 
 ### Running Tests
 
 ```bash
 # Command line
-xcodebuild test -scheme ModMove -destination 'platform=macOS'
+xcodebuild test -scheme ModMove -destination 'platform=macOS'   # or: make test
 
-# Or in Xcode
-# Open ModMove.xcodeproj and press Cmd+U
+# Or in Xcode: open ModMove.xcodeproj and press Cmd+U
 ```
 
 ### Accessibility Permissions
@@ -224,14 +235,14 @@ Priority 1 (identified but not yet implemented):
 
 ### Test Coverage
 
-70 tests organized into 4 suites:
+83 tests organized into 5 suites:
 
 1. **CornerDetectionTests** (11 tests)
    - All corner quadrants
    - Edge cases: center point, midlines, small/large windows
    - Various window positions
 
-2. **BoundaryConstraintTests** (18 tests)
+2. **BoundaryConstraintTests** (23 tests)
    - All edges and corners for move operations
    - All edges for resize operations (per corner)
    - Fast movement bypass behavior
@@ -242,17 +253,22 @@ Priority 1 (identified but not yet implemented):
    - Edge touching vs. off-screen
    - Resize constraint decisions
 
-4. **PositionSizeCalculationTests** (21 tests)
+4. **PositionSizeCalculationTests** (22 tests)
    - Size calculations for all corners (grow/shrink)
    - Position calculations with and without size constraints
    - Handling of macOS minimum size enforcement
    - Zero delta and negative size edge cases
 
+5. **ScreenCoordinateTests** (7 tests)
+   - NSScreen ↔ Accessibility Y-coordinate conversion
+   - Screen selection for windows on multi-monitor setups
+   - Screens above the primary (negative Accessibility Y)
+
 ### Test Philosophy
 
 - **Pure functions are easy to test**: WindowCalculations.swift has no state or side effects
 - **Comprehensive coverage**: All behavior documented in tests
-- **Fast execution**: 70 tests run in <0.1 seconds
+- **Fast execution**: full suite runs in <0.1 seconds
 - **Regression prevention**: Tests ensure bugs stay fixed
 
 ### Testing Limitations & Lessons Learned
