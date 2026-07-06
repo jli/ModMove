@@ -30,5 +30,5 @@ else
 fi
 echo ""
 echo "Next steps:"
-echo "  ./deploy.sh [version]  - Deploy to /Applications"
-echo "  ./run.sh [version]     - Build, deploy, and run"
+echo "  ./run.sh     - Build and run from build/ (dev iteration)"
+echo "  ./deploy.sh  - Install canonical copy to /Applications/ModMove-jli.app"

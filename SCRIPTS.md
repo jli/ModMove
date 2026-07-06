@@ -2,25 +2,50 @@
 
 Quick reference for ModMove build and deployment scripts.
 
-## Quick Start
+## The Two Workflows
 
-**Recommended: Use `run.sh` for development**
+| | Command | Where it runs | When to use |
+|---|---|---|---|
+| **Dev iteration** | `./run.sh` | `./build/ModMove.app` | Testing changes quickly |
+| **Canonical install** | `./deploy.sh` | `/Applications/ModMove-jli.app` | "Ship it" — the copy you actually use day-to-day |
+
+The canonical install uses a **stable bundle path** on purpose:
+
+- Accessibility (TCC) permission is granted once and survives redeploys
+- Launch-at-login items keep pointing at a valid app
+- Launch Services isn't confused by multiple bundles with the same bundle ID
+
+(The old scheme deployed dated copies like `ModMove-jli-v0705-2355.app`. Don't do
+that — every new name is a new app to macOS, re-triggering permission prompts and
+leaving stale copies and broken login items behind. If you have leftovers:
+`rm -rf /Applications/ModMove-jli-*.app`.)
+
+## Scripts
+
+### `run.sh` - Build and run from build/ (dev iteration)
 
 ```bash
-./run.sh            # Build, deploy, and run (auto-versioned)
-./run.sh v1234      # Build, deploy, and run with specific version
+./run.sh
 ```
 
-This single command:
-1. Checks for existing ModMove processes
-2. Builds the app (Release configuration)
-3. Stops all running instances
-4. Deploys to `/Applications/ModMove-jli-<version>.app`
-5. Launches the app
-6. Verifies exactly one instance is running
-7. Shows which version is running
+1. Builds Release configuration to `./build/ModMove.app`
+2. Kills **all** running ModMove instances (any bundle name, any location)
+3. Launches from `./build/`
+4. Verifies exactly one instance is running and prints its path
 
-## Individual Scripts
+Does **not** touch `/Applications`.
+
+### `deploy.sh` - Install the canonical copy
+
+```bash
+./deploy.sh
+```
+
+1. Requires an existing build (`./build.sh` or `./run.sh` first)
+2. Kills all running instances
+3. Replaces `/Applications/ModMove-jli.app` with the build
+4. Launches it and verifies exactly one instance is running from the canonical path
+5. Warns about stale dated copies from the old scheme
 
 ### `build.sh` - Build only
 
@@ -28,93 +53,50 @@ This single command:
 ./build.sh
 ```
 
-Builds ModMove in Release configuration to `./build/ModMove.app`.
+Builds Release configuration to `./build/ModMove.app` without launching anything.
 
-Use this when you want to build without deploying.
-
-### `deploy.sh` - Deploy only
+### `logs.sh` - Stream debug logs
 
 ```bash
-./deploy.sh            # Auto-versioned (timestamp)
-./deploy.sh v1234      # Specific version
+./logs.sh
 ```
 
-Deploys an existing build to `/Applications/ModMove-jli-<version>.app`.
+Streams `[ModMove]` log output (also saved to `./modmove.log`). Trigger a
+move/resize gesture and you should see `Got window - app: ...` lines.
 
-- Stops any running ModMove instances
-- Cleans up old versions (keeps last 3)
-- Requires `./build.sh` to be run first
+## Killing Instances (Important!)
 
-### `run.sh` - Build, deploy, and run (ALL-IN-ONE)
+Multiple simultaneously-running copies cause the "two windows move at once" bug.
+Bundle names vary (`ModMove.app`, `ModMove-jli.app`, old dated copies), but the
+**binary name is always `ModMove`**, so match on that:
 
 ```bash
-./run.sh               # Auto-versioned (timestamp: vMMDD-HHMM)
-./run.sh v1234         # Specific version
+pkill -x ModMove      # kill ALL copies, wherever they live
+pgrep -lx ModMove     # list running copies (should be empty after kill)
+ps -p <pid> -o command=   # see which bundle a pid is running from
 ```
 
-Does everything in one command:
-- Builds from scratch
-- Deploys to /Applications
-- Launches the app
-- Verifies process state
+Do **not** grep for `ModMove.app` in the process list — that misses renamed
+bundles (this was a real bug in earlier versions of these scripts).
 
-**This is the recommended script for development.**
+Both `run.sh` and `deploy.sh` do this automatically before launching.
 
-## Process Verification
+## Manual Testing Checklist
 
-All scripts now include process verification with `ps` and `grep`:
+1. `pkill -x ModMove` — kill everything
+2. `pgrep -lx ModMove` — confirm nothing is running
+3. `./run.sh` — build and launch; confirm "✓ Exactly 1 instance running"
+4. `./logs.sh` in another terminal
+5. Hold ⌃⌥ and move the mouse over a window → window moves, logs show activity
+6. Hold ⌃⌥⇧ → window resizes from the closest corner
 
-- Shows running ModMove instances before/after operations
-- Identifies which version is running (checks binary path)
-- Warns if multiple instances are running
-- Color-coded output for easy scanning
-
-Example output:
-```
-Process verification:
-  ✓ Exactly 1 instance running (correct)
-
-Running instances:
-  PID 12345: /Applications/ModMove-jli-v1206-1755.app/Contents/MacOS/ModMove [CURRENT VERSION]
-```
-
-## Version Management
-
-- **Auto-versioning**: If no version specified, uses timestamp (e.g., `v1206-1755`)
-- **Named versions**: Pass version as argument (e.g., `v1.0`, `v-beta`, `v-stable`)
-- **Cleanup**: Automatically keeps only last 3 versions in /Applications
-
-## Examples
-
-```bash
-# Development workflow (quick iteration)
-./run.sh                    # Quick build-deploy-run with timestamp version
-
-# Release workflow
-./run.sh v1.0.0            # Build and deploy release version
-./run.sh v1.0.0-beta1      # Build and deploy beta version
-
-# Manual control
-./build.sh                 # Build only
-./deploy.sh v-test         # Deploy with specific version
-open /Applications/ModMove-jli-v-test.app   # Launch manually
-
-# Check what's running
-ps aux | grep -i modmove
-```
+If gestures do nothing and logs are silent: Accessibility permission is missing
+for this copy — System Settings → Privacy & Security → Accessibility.
 
 ## Color Coding
 
 Scripts use color output for clarity:
 - 🔵 **Blue**: Section headers
 - 🟡 **Yellow**: Operations in progress
-- 🟢 **Green**: Success/current version
+- 🟢 **Green**: Success
 - 🔴 **Red**: Errors/warnings
-
-## Tips
-
-- Use `./run.sh` for most development work
-- Use versioned names for releases: `./run.sh v1.0.0`
-- Scripts verify only one instance is running
-- Old versions auto-cleaned (keeps last 3)
-- All scripts stop existing instances before deploying

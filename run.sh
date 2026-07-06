@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# Dev workflow: build and run from ./build/ WITHOUT touching /Applications.
+# Use ./deploy.sh to install the canonical copy to /Applications/ModMove-jli.app
+#
+# NOTE: if the deployed copy has launch-at-login enabled, it will come back at
+# next login even while you're testing a build/ copy. Kill with: pkill -x ModMove
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -12,23 +18,11 @@ BUILD_DIR="$(pwd)/build"
 APP_PATH="${BUILD_DIR}/ModMove.app"
 
 echo -e "${BLUE}=== ModMove Debug Run ===${NC}"
-echo -e "${BLUE}(Runs from build directory - use ./deploy.sh for stable releases)${NC}"
+echo -e "${BLUE}(Runs from build directory - use ./deploy.sh for the canonical install)${NC}"
 echo ""
 
-# Step 1: Check for running instances
-echo -e "${YELLOW}[1/4] Checking for existing ModMove instances...${NC}"
-EXISTING_PROCS=$(ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep || true)
-if [ -n "$EXISTING_PROCS" ]; then
-    echo "Found running instances:"
-    echo "$EXISTING_PROCS" | awk '{print "  PID " $2 ": " $11}'
-    echo ""
-else
-    echo "  No instances running"
-    echo ""
-fi
-
-# Step 2: Build
-echo -e "${YELLOW}[2/4] Building ModMove (Release configuration)...${NC}"
+# Step 1: Build
+echo -e "${YELLOW}[1/3] Building ModMove (Release configuration)...${NC}"
 xcodebuild -project ModMove.xcodeproj \
     -scheme ModMove \
     -configuration Release \
@@ -43,25 +37,19 @@ fi
 echo -e "${GREEN}  Build complete!${NC}"
 echo ""
 
-# Step 3: Kill ALL existing ModMove instances (everywhere)
-echo -e "${YELLOW}[3/4] Stopping all ModMove instances...${NC}"
-MODMOVE_PIDS=$(ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep | awk '{print $2}')
-if [ -n "$MODMOVE_PIDS" ]; then
-    echo "$MODMOVE_PIDS" | while read -r pid; do
-        BINARY_PATH=$(ps -p "$pid" -o command= 2>/dev/null | awk '{print $1}')
-        echo "  Killing PID $pid: $BINARY_PATH"
-        kill "$pid" 2>/dev/null || true
+# Step 2: Kill ALL existing ModMove instances, regardless of bundle name/location.
+# NOTE: match by binary name (pkill -x), NOT by bundle path — dated/renamed
+# bundles like ModMove-jli-v0705.app would not match a path-based grep.
+echo -e "${YELLOW}[2/3] Stopping all ModMove instances...${NC}"
+if pgrep -x ModMove > /dev/null; then
+    pgrep -x ModMove | while read -r pid; do
+        echo "  Killing PID $pid: $(ps -p "$pid" -o command= 2>/dev/null || echo '?')"
     done
+    pkill -x ModMove || true
     sleep 1
-
-    # Verify all are stopped, force kill if needed
-    REMAINING=$(ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep | awk '{print $2}')
-    if [ -n "$REMAINING" ]; then
+    if pgrep -x ModMove > /dev/null; then
         echo -e "${YELLOW}  Force killing remaining instances...${NC}"
-        echo "$REMAINING" | while read -r pid; do
-            echo "    Force killing PID $pid"
-            kill -9 "$pid" 2>/dev/null || true
-        done
+        pkill -9 -x ModMove || true
         sleep 1
     fi
     echo -e "${GREEN}  Stopped all instances${NC}"
@@ -70,22 +58,21 @@ else
 fi
 echo ""
 
-# Step 4: Launch from build directory and verify
-echo -e "${YELLOW}[4/4] Launching ModMove from ${APP_PATH}...${NC}"
+# Step 3: Launch from build directory and verify
+echo -e "${YELLOW}[3/3] Launching ModMove from ${APP_PATH}...${NC}"
 open "$APP_PATH"
 sleep 2
 
-# Verify exactly one instance is running
 echo ""
 echo -e "${BLUE}Process verification:${NC}"
-RUNNING_PROCS=$(ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep || true)
+PIDS=$(pgrep -x ModMove || true)
 
-if [ -z "$RUNNING_PROCS" ]; then
+if [ -z "$PIDS" ]; then
     echo -e "${RED}  ERROR: No ModMove instances running!${NC}"
     exit 1
 fi
 
-PROC_COUNT=$(echo "$RUNNING_PROCS" | wc -l | xargs)
+PROC_COUNT=$(echo "$PIDS" | wc -l | xargs)
 if [ "$PROC_COUNT" -eq 1 ]; then
     echo -e "${GREEN}  ✓ Exactly 1 instance running (correct)${NC}"
 else
@@ -94,10 +81,9 @@ fi
 
 echo ""
 echo "Running instances:"
-echo "$RUNNING_PROCS" | while read -r line; do
-    PID=$(echo "$line" | awk '{print $2}')
-    BINARY_PATH=$(echo "$line" | awk '{print $11}')
-    echo -e "  ${GREEN}PID $PID: $BINARY_PATH${NC}"
+echo "$PIDS" | while read -r pid; do
+    BINARY_PATH=$(ps -p "$pid" -o command= 2>/dev/null)
+    echo -e "  ${GREEN}PID $pid: $BINARY_PATH${NC}"
 done
 
 echo ""
@@ -106,5 +92,8 @@ echo ""
 echo "Running from: ${APP_PATH}"
 echo ""
 echo "Tips:"
-echo "  ./logs.sh               - Stream debug logs"
-echo "  ./deploy.sh [version]   - Deploy stable version to /Applications"
+echo "  ./logs.sh     - Stream debug logs"
+echo "  ./deploy.sh   - Install canonical copy to /Applications/ModMove-jli.app"
+echo ""
+echo "If gestures do nothing and logs are silent, the build/ copy may need"
+echo "Accessibility permission: System Settings → Privacy & Security → Accessibility"

@@ -97,7 +97,7 @@ ModMove/
    - All 83+ tests should pass
 
 4. **Only then test in real life**
-   - Build, deploy, and run the app: `./run.sh`
+   - Build and run the app: `./run.sh` (see "Manual Testing Protocol" below)
    - Manually verify the fix works as expected
    - Test edge cases and interaction with other features
 
@@ -110,14 +110,22 @@ This workflow ensures:
 ### Building & Running
 
 ```bash
-# Recommended: build, deploy, and run in one step (kills stale instances)
+# Dev iteration: build and run from ./build/ (kills ALL stale instances first)
 ./run.sh
+
+# Canonical install: replace /Applications/ModMove-jli.app with current build
+./deploy.sh
 
 # Build only
 xcodebuild -scheme ModMove build   # or ./build.sh (Release)
 
 # Or in Xcode: open ModMove.xcodeproj and press Cmd+B
 ```
+
+`run.sh` never touches `/Applications`; `deploy.sh` always installs to the **stable
+path** `/Applications/ModMove-jli.app` (never dated copies — a stable bundle path
+keeps the Accessibility permission grant and launch-at-login item valid across
+redeploys).
 
 See `SCRIPTS.md` for the full script reference (`build.sh`, `deploy.sh`, `run.sh`, `logs.sh`, `Makefile` targets).
 
@@ -129,6 +137,38 @@ xcodebuild test -scheme ModMove -destination 'platform=macOS'   # or: make test
 
 # Or in Xcode: open ModMove.xcodeproj and press Cmd+U
 ```
+
+### Manual Testing Protocol (for agents and humans)
+
+**Multiple running copies cause bugs** (two windows moving at once). Bundle names
+vary (`ModMove.app` in build/, `ModMove-jli.app` in /Applications, possibly stale
+dated copies), but the binary name is always `ModMove` — so kill/check by binary
+name, never by grepping for a bundle path:
+
+```bash
+# 1. Kill ALL copies, wherever they live
+pkill -x ModMove
+
+# 2. Verify nothing is running
+pgrep -lx ModMove          # expect no output
+
+# 3. Build and launch (also kills stale instances itself)
+./run.sh                   # expect "✓ Exactly 1 instance running"
+
+# 4. Verify which copy is running
+pgrep -x ModMove | xargs -I{} ps -p {} -o command=
+
+# 5. Stream logs in another terminal while testing gestures
+./logs.sh                  # expect "[ModMove] Got window - app: ..." during gestures
+```
+
+Manual gesture test: hold ⌃⌥ + move mouse over a window → it moves;
+hold ⌃⌥⇧ → it resizes from the closest corner.
+
+**If gestures do nothing and logs are silent**: Accessibility permission is missing
+for this copy (System Settings → Privacy & Security → Accessibility). macOS prompts
+on first run; a `build/` copy may need its own grant. This cannot be granted
+programmatically — ask the user.
 
 ### Accessibility Permissions
 
@@ -330,11 +370,16 @@ Priority 1 (identified but not yet implemented):
 
 **Fix:**
 ```bash
-# Kill ALL ModMove instances
-ps aux | grep "ModMove\.app/Contents/MacOS/ModMove" | grep -v grep | awk '{print $2}' | xargs kill
+# Kill ALL ModMove instances by binary name (bundle names vary!)
+pkill -x ModMove
 ```
 
-**Prevention:** Use `./run.sh` which now kills ALL instances before launching a new one.
+Do NOT grep the process list for `ModMove.app` — renamed bundles (e.g.
+`ModMove-jli.app`) won't match, and you'll miss exactly the instances causing
+the bug.
+
+**Prevention:** Use `./run.sh` or `./deploy.sh`, which kill ALL instances (by
+binary name) before launching.
 
 **Why it happens:**
 - Each instance monitors keyboard shortcuts independently
