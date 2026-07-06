@@ -12,6 +12,7 @@
 		4A73FBD5D4E6E0A7BB455BFA /* CornerDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125A78FEF5A8AFCFECB12B33 /* CornerDetectionTests.swift */; };
 		89AAF27312D440A0EC22F889 /* BoundaryConstraintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4A7BC3ED65CACCD499CE619 /* BoundaryConstraintTests.swift */; };
 		8D41BB66444A229874FE5FFD /* SpeedBasedBehaviorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DA873BFBF2850532F341E70 /* SpeedBasedBehaviorTests.swift */; };
+		AA01BB66444A229874FE0001 /* ScreenCoordinateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA01BB66444A229874FE0002 /* ScreenCoordinateTests.swift */; };
 		C27E731B1BD9FFB00058FDD0 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27E731A1BD9FFB00058FDD0 /* AppDelegate.swift */; };
 		C27E731D1BD9FFB00058FDD0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C27E731C1BD9FFB00058FDD0 /* Assets.xcassets */; };
 		C27E73201BD9FFB00058FDD0 /* MainMenu.xib in Resources */ = {isa = PBXBuildFile; fileRef = C27E731E1BD9FFB00058FDD0 /* MainMenu.xib */; };
@@ -40,6 +41,7 @@
 		125A78FEF5A8AFCFECB12B33 /* CornerDetectionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CornerDetectionTests.swift; sourceTree = "<group>"; };
 		274F2673A40E59D828D01019 /* WindowCalculations.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WindowCalculations.swift; sourceTree = "<group>"; };
 		5DA873BFBF2850532F341E70 /* SpeedBasedBehaviorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SpeedBasedBehaviorTests.swift; sourceTree = "<group>"; };
+		AA01BB66444A229874FE0002 /* ScreenCoordinateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenCoordinateTests.swift; sourceTree = "<group>"; };
 		9C15BFFC4044102184DA748E /* PositionSizeCalculationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PositionSizeCalculationTests.swift; sourceTree = "<group>"; };
 		C27E73171BD9FFB00058FDD0 /* ModMove.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ModMove.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C27E731A1BD9FFB00058FDD0 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -87,6 +89,7 @@
 				F4A7BC3ED65CACCD499CE619 /* BoundaryConstraintTests.swift */,
 				5DA873BFBF2850532F341E70 /* SpeedBasedBehaviorTests.swift */,
 				9C15BFFC4044102184DA748E /* PositionSizeCalculationTests.swift */,
+				AA01BB66444A229874FE0002 /* ScreenCoordinateTests.swift */,
 			);
 			name = ModMoveTests;
 			path = ModMoveTests;
@@ -275,6 +278,7 @@
 				89AAF27312D440A0EC22F889 /* BoundaryConstraintTests.swift in Sources */,
 				8D41BB66444A229874FE5FFD /* SpeedBasedBehaviorTests.swift in Sources */,
 				075999AFA895B1CE77FD52F5 /* PositionSizeCalculationTests.swift in Sources */,
+				AA01BB66444A229874FE0001 /* ScreenCoordinateTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

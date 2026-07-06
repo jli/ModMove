@@ -138,6 +138,26 @@ The app requires Accessibility API access to manipulate windows. macOS will prom
 - Multi-monitor aware
 - Implementation: `WindowCalculations.calculateConstrainedMoveDelta()` and `calculateConstrainedResizeDelta()`
 
+### Multi-Monitor Coordinate Conversion (single-Space setups)
+
+macOS Accessibility/CoreGraphics global coordinates use the **top-left of the primary
+screen** as the origin (Y increases downward). NSScreen uses bottom-left origin of the
+primary screen (Y increases upward). Screens physically **above** the primary have
+**negative** Accessibility Y values.
+
+This matters most when *"Displays have separate Spaces"* is DISABLED in
+System Settings → Desktop & Dock (all screens share one Space). A screen stacked above
+the primary then has a larger NSScreen `maxY` than the primary's height.
+
+- **Bug (fixed 2026-07-05)**: `getUsableScreen()` converted coordinates relative to
+  `globalMaxY` (max `maxY` across all screens) instead of the primary screen height.
+  With a screen above the primary this shifted every screen, so the window→screen lookup
+  picked the wrong physical screen. Windows on the top screen were constrained against the
+  wrong frame and "sank" past the real boundary during move/resize.
+- **Fix**: Convert relative to the primary screen height
+  (`WindowCalculations.nsYToAccessibilityY`) and select the containing screen with
+  `WindowCalculations.findUsableScreen()` (pure, tested in `ScreenCoordinateTests.swift`).
+
 ### "Sticky Edge" / Fast Movement Escape
 
 - **Slow movements** (<1000 px/sec): Keep windows within screen bounds

@@ -1,8 +1,80 @@
 import Foundation
 
+/// Describes a physical screen in NSScreen coordinates (bottom-left origin).
+/// Used by the pure screen-lookup logic so it can be unit tested without a live
+/// display configuration.
+struct ScreenInfo {
+    let frame: NSRect         // Full screen frame (NSScreen coords)
+    let visibleFrame: NSRect  // Usable area, excludes menu bar / dock (NSScreen coords)
+    let backingScaleFactor: CGFloat
+}
+
 /// Pure functions for window manipulation calculations.
 /// These functions have no side effects and are fully testable.
 struct WindowCalculations {
+
+    // MARK: - Screen Coordinate Conversion
+
+    /// Converts a Y coordinate from NSScreen space (bottom-left origin, Y up) to
+    /// Accessibility/CoreGraphics space (top-left origin of the PRIMARY screen, Y down).
+    ///
+    /// The AX/CG global coordinate origin is the top-left of the primary screen
+    /// (the screen whose NSScreen frame origin is (0, 0)). Screens physically above
+    /// the primary therefore have NEGATIVE AX Y values. This is why we must convert
+    /// relative to the primary screen height and NOT relative to the global maximum Y
+    /// across all screens.
+    static func nsYToAccessibilityY(nsY: CGFloat, primaryScreenHeight: CGFloat) -> CGFloat {
+        return primaryScreenHeight - nsY
+    }
+
+    /// Finds the screen that contains the given window position and returns its usable
+    /// (visible) frame converted to Accessibility coordinates, along with its scale factor.
+    ///
+    /// - Parameters:
+    ///   - windowPosition: Window top-left in Accessibility coordinates.
+    ///   - screens: All screens, in NSScreen coordinates.
+    ///   - primaryScreenHeight: Height of the primary screen (defines the AX origin).
+    /// - Returns: The visible frame in Accessibility coordinates and the scale factor,
+    ///   or nil if the position isn't contained by any screen.
+    static func findUsableScreen(
+        windowPosition: CGPoint,
+        screens: [ScreenInfo],
+        primaryScreenHeight: CGFloat
+    ) -> (frame: NSRect, scaleFactor: CGFloat)? {
+        for screen in screens {
+            // Convert this screen's vertical bounds into Accessibility coordinates.
+            // NSScreen maxY (top of screen) maps to the smaller AX Y value.
+            let accessibilityScreenMinY = nsYToAccessibilityY(nsY: screen.frame.maxY, primaryScreenHeight: primaryScreenHeight)  // Top
+            let accessibilityScreenMaxY = nsYToAccessibilityY(nsY: screen.frame.minY, primaryScreenHeight: primaryScreenHeight)  // Bottom
+
+            if windowPosition.x >= screen.frame.minX && windowPosition.x <= screen.frame.maxX &&
+               windowPosition.y >= accessibilityScreenMinY && windowPosition.y <= accessibilityScreenMaxY {
+                let accessibilityVisibleMinY = nsYToAccessibilityY(nsY: screen.visibleFrame.maxY, primaryScreenHeight: primaryScreenHeight)
+                let accessibilityFrame = NSRect(
+                    x: screen.visibleFrame.minX,
+                    y: accessibilityVisibleMinY,
+                    width: screen.visibleFrame.width,
+                    height: screen.visibleFrame.height
+                )
+                return (accessibilityFrame, screen.backingScaleFactor)
+            }
+        }
+        return nil
+    }
+
+    /// Converts a screen's visible frame (NSScreen coords) into Accessibility coordinates.
+    static func accessibilityVisibleFrame(
+        for screen: ScreenInfo,
+        primaryScreenHeight: CGFloat
+    ) -> NSRect {
+        let accessibilityVisibleMinY = nsYToAccessibilityY(nsY: screen.visibleFrame.maxY, primaryScreenHeight: primaryScreenHeight)
+        return NSRect(
+            x: screen.visibleFrame.minX,
+            y: accessibilityVisibleMinY,
+            width: screen.visibleFrame.width,
+            height: screen.visibleFrame.height
+        )
+    }
 
     // MARK: - Corner Detection
 

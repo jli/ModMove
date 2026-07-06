@@ -129,50 +129,39 @@ final class Mover {
         }
 
         // Convert window position from Accessibility API coordinates (top-left origin)
-        // to NSScreen coordinates (bottom-left origin)
-        // The Accessibility API uses Cocoa flipped coordinates where y=0 is at the top
-        // NSScreen uses standard Cocoa coordinates where y=0 is at the bottom
+        // to NSScreen coordinates (bottom-left origin).
+        //
+        // The Accessibility/CoreGraphics global coordinate origin is the TOP-LEFT of the
+        // PRIMARY screen (the one whose NSScreen frame origin is (0, 0) — it owns the menu
+        // bar). Screens physically above the primary have NEGATIVE AX Y values.
+        //
+        // This matters most when "Displays have separate Spaces" is DISABLED: all screens
+        // share a single coordinate space, and a screen stacked above the primary can have
+        // a larger NSScreen maxY than the primary's height. Converting relative to the
+        // global maximum Y (instead of the primary height) would shift every screen and
+        // make the window→screen lookup pick the wrong physical screen, causing windows
+        // to "sink" past the real screen boundary during move/resize.
 
-        // Find the global max Y to convert NSScreen coords to Accessibility coords
-        // In NSScreen: origin is bottom-left, Y increases upward
-        // In Accessibility: origin is top-left, Y increases downward
-        // We need to find the highest point across all screens
-        let globalMaxY = NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
+        // The primary screen is the one anchored at the NSScreen origin (0, 0).
+        let primaryScreen = NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first
+        let primaryScreenHeight = primaryScreen?.frame.height ?? 0
 
-        // Find which screen contains the window by checking in Accessibility coords
-        for screen in NSScreen.screens {
-            // Convert this screen's NSScreen frame to Accessibility coords
-            // For a screen at NSScreen Y from minY to maxY:
-            // - The top in Accessibility is: globalMaxY - maxY
-            // - The bottom in Accessibility is: globalMaxY - minY
-            let accessibilityScreenMinY = globalMaxY - screen.frame.maxY  // Top
-            let accessibilityScreenMaxY = globalMaxY - screen.frame.minY  // Bottom
+        let screenInfos = NSScreen.screens.map {
+            ScreenInfo(frame: $0.frame, visibleFrame: $0.visibleFrame, backingScaleFactor: $0.backingScaleFactor)
+        }
 
-            // Check if window position is within this screen's bounds
-            if pos.x >= screen.frame.minX && pos.x <= screen.frame.maxX &&
-               pos.y >= accessibilityScreenMinY && pos.y <= accessibilityScreenMaxY {
-                // Convert visibleFrame from NSScreen coords to Accessibility coords
-                let accessibilityVisibleMinY = globalMaxY - screen.visibleFrame.maxY
-                let accessibilityFrame = NSRect(
-                    x: screen.visibleFrame.minX,
-                    y: accessibilityVisibleMinY,
-                    width: screen.visibleFrame.width,
-                    height: screen.visibleFrame.height
-                )
-                return (accessibilityFrame, screen.backingScaleFactor)
-            }
+        if let result = WindowCalculations.findUsableScreen(
+            windowPosition: pos,
+            screens: screenInfos,
+            primaryScreenHeight: primaryScreenHeight
+        ) {
+            return result
         }
 
         // Fallback to main screen if window position isn't on any screen
         if let main = NSScreen.main {
-            let globalMaxY = NSScreen.screens.map { $0.frame.maxY }.max() ?? 0
-            let accessibilityVisibleMinY = globalMaxY - main.visibleFrame.maxY
-            let accessibilityFrame = NSRect(
-                x: main.visibleFrame.minX,
-                y: accessibilityVisibleMinY,
-                width: main.visibleFrame.width,
-                height: main.visibleFrame.height
-            )
+            let mainInfo = ScreenInfo(frame: main.frame, visibleFrame: main.visibleFrame, backingScaleFactor: main.backingScaleFactor)
+            let accessibilityFrame = WindowCalculations.accessibilityVisibleFrame(for: mainInfo, primaryScreenHeight: primaryScreenHeight)
             return (accessibilityFrame, main.backingScaleFactor)
         }
         return (NSRect.zero, 1)
