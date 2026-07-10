@@ -208,48 +208,79 @@ class SpeedBasedBehaviorTests: XCTestCase {
 
     // MARK: - Resize Constraint Decision
 
-    func testResizeSlowSpeed_ShouldConstrain() {
-        let mouseSpeed: CGFloat = 500  // Below threshold
+    // A window rect fully inside insideFrame, for the speed-only assertions.
+    private let insideFrame = NSRect(x: 0, y: 23, width: 1920, height: 1057)
+    private let insideRect = NSRect(x: 100, y: 100, width: 400, height: 300)
 
+    func testResizeSlowSpeed_WindowInside_ShouldConstrain() {
         let shouldConstrain = WindowCalculations.shouldConstrainResize(
-            mouseSpeed: mouseSpeed,
-            speedThreshold: speedThreshold
+            mouseSpeed: 500,
+            speedThreshold: speedThreshold,
+            currentWindowRect: insideRect,
+            screenFrame: insideFrame
         )
 
-        XCTAssertTrue(shouldConstrain, "Slow resize should constrain")
+        XCTAssertTrue(shouldConstrain, "Slow resize inside frame should constrain")
     }
 
     func testResizeFastSpeed_ShouldNotConstrain() {
-        let mouseSpeed: CGFloat = 1500  // Above threshold
-
         let shouldConstrain = WindowCalculations.shouldConstrainResize(
-            mouseSpeed: mouseSpeed,
-            speedThreshold: speedThreshold
+            mouseSpeed: 1500,
+            speedThreshold: speedThreshold,
+            currentWindowRect: insideRect,
+            screenFrame: insideFrame
         )
 
         XCTAssertFalse(shouldConstrain, "Fast resize should not constrain")
     }
 
     func testResizeExactThreshold_ShouldNotConstrain() {
-        let mouseSpeed: CGFloat = 1000  // Exactly at threshold
-
         let shouldConstrain = WindowCalculations.shouldConstrainResize(
-            mouseSpeed: mouseSpeed,
-            speedThreshold: speedThreshold
+            mouseSpeed: 1000,
+            speedThreshold: speedThreshold,
+            currentWindowRect: insideRect,
+            screenFrame: insideFrame
         )
 
         XCTAssertFalse(shouldConstrain, "Resize at exact threshold should not constrain")
     }
 
-    func testResizeZeroSpeed_ShouldConstrain() {
-        let mouseSpeed: CGFloat = 0
-
+    func testResizeZeroSpeed_WindowInside_ShouldConstrain() {
         let shouldConstrain = WindowCalculations.shouldConstrainResize(
-            mouseSpeed: mouseSpeed,
-            speedThreshold: speedThreshold
+            mouseSpeed: 0,
+            speedThreshold: speedThreshold,
+            currentWindowRect: insideRect,
+            screenFrame: insideFrame
         )
 
-        XCTAssertTrue(shouldConstrain, "Zero speed resize should constrain")
+        XCTAssertTrue(shouldConstrain, "Zero speed resize inside frame should constrain")
+    }
+
+    // Constraints may prevent a window from LEAVING the frame; they must never YANK a
+    // window that is already outside it. Same semantics as moves.
+
+    func testResizeSlowSpeed_WindowOutsideFrame_ShouldNotConstrain() {
+        let outsideRect = NSRect(x: 100, y: 1080, width: 800, height: 600) // below frame
+        let shouldConstrain = WindowCalculations.shouldConstrainResize(
+            mouseSpeed: 0,
+            speedThreshold: speedThreshold,
+            currentWindowRect: outsideRect,
+            screenFrame: insideFrame
+        )
+
+        XCTAssertFalse(shouldConstrain, "Window outside the frame must never be yanked by resize constraints")
+    }
+
+    func testResizeSlowSpeed_WindowStraddlingEdge_ShouldNotConstrain() {
+        let straddlingRect = NSRect(x: 1700, y: 100, width: 400, height: 300) // over right edge
+        let shouldConstrain = WindowCalculations.shouldConstrainResize(
+            mouseSpeed: 0,
+            speedThreshold: speedThreshold,
+            currentWindowRect: straddlingRect,
+            screenFrame: insideFrame
+        )
+
+        XCTAssertFalse(shouldConstrain, "Window straddling a frame edge must not be constrained")
     }
 
     // MARK: - Edge Cases

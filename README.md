@@ -32,12 +32,8 @@ This is an enhanced fork with significant improvements to precision, screen boun
 git clone <your-fork-url>
 cd ModMove
 
-# Build and deploy
-./build.sh
-./deploy.sh v1206
-
-# Launch
-open /Applications/ModMove-jli-v1206.app
+# Build and deploy (installs to /Applications/ModMove-jli.app and launches it)
+make deploy
 ```
 
 ### First Run
@@ -59,11 +55,8 @@ make clean    # Clean build artifacts
 make help     # Show all commands
 ```
 
-### Shell Scripts
-
-- `./run.sh` - Build and run with process verification
-- `./logs.sh` - Stream debug logs
-- `./deploy.sh [version]` - Deploy to `/Applications/ModMove-jli-[version].app`
+See `SCRIPTS.md` for how `make run`/`make deploy` build (only if needed) and
+then delegate to `run.sh`/`deploy.sh` for the kill/launch/verify logic.
 
 ### Project Structure
 

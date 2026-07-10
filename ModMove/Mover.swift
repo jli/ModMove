@@ -9,6 +9,170 @@ enum Corner {
     case BottomRight
 }
 
+/// Minimal window surface the resize orchestration needs. Lets tests drive the
+/// orchestration against a fake window that reproduces the macOS WindowServer's
+/// observed (mis)behaviors — which pure calculation tests cannot catch.
+protocol WindowControlling: AnyObject {
+    var position: CGPoint? { get set }
+    var size: CGSize? { get set }
+}
+
+extension AccessibilityElement: WindowControlling {}
+
+/// Applies one frame of a resize gesture to a window.
+///
+/// Extracted from Mover so the order-of-operations logic — where every screen-edge bug
+/// so far has lived — is unit-testable against a simulated window server.
+///
+/// Observed macOS behaviors this must survive (probed on macOS 26.5, two stacked screens):
+/// - Size sets are applied faithfully (clamped to the app's minimum).
+/// - Position sets whose rect would STRADDLE two displays are not applied faithfully:
+///   the WindowServer teleports the window somewhere else entirely (sometimes the
+///   destination screen's edge, sometimes near the top of the origin screen).
+struct ResizeFrameApplier {
+    static let epsilon: CGFloat = 0.1
+    /// How far the WindowServer may deviate from a requested position before we treat the
+    /// result as a teleport. Teleports observed in probing were hundreds to >1600 px.
+    static let teleportTolerance: CGFloat = 2.0
+
+    static func apply(
+        window: WindowControlling,
+        corner: Corner,
+        initialPosition: CGPoint,
+        initialSize: CGSize,
+        desiredSize: CGSize,
+        currentPosition: CGPoint,
+        currentSize: CGSize,
+        positionSetsAreReliable: Bool = true
+    ) {
+        // A window already straddling two displays can never receive a reliable position
+        // set — even a rollback to its pre-frame origin teleports (the restore rect itself
+        // straddles). Degrade to size-only resizing: the anchor is wrong for top/left
+        // corners, but the window can never be mangled.
+        guard positionSetsAreReliable else {
+            window.size = desiredSize
+            return
+        }
+
+        // Track the last position we REQUESTED so we can detect the WindowServer applying
+        // something wildly different (teleport) and roll the frame back.
+        var lastRequestedPosition: CGPoint? = nil
+        func setPosition(_ p: CGPoint) {
+            window.position = p
+            lastRequestedPosition = p
+        }
+        defer {
+            verifyAndRepair(
+                window: window,
+                lastRequestedPosition: lastRequestedPosition,
+                preFramePosition: currentPosition,
+                preFrameSize: currentSize
+            )
+        }
+
+        let needsPositionUpdate = (corner == .TopLeft || corner == .TopRight || corner == .BottomLeft)
+
+        if needsPositionUpdate {
+            let isGrowing = (desiredSize.width > currentSize.width + epsilon ||
+                             desiredSize.height > currentSize.height + epsilon)
+
+            if isGrowing {
+                // Grow AWAY from the anchor first (size with position untouched), THEN move
+                // the origin — see AGENTS.md "Resize order-of-operations at screen edges".
+                window.size = desiredSize
+                var actualSize = window.size ?? currentSize
+
+                if WindowCalculations.sizeFellShort(of: desiredSize, actual: actualSize, epsilon: epsilon) {
+                    // No room to grow away from the anchor (window against an OUTER screen
+                    // edge). Fall back to position-first — the 2025-12-06 fix.
+                    NSLog("[ModMove] resize: size-first clamped (desired: %@, actual: %@), retrying position-first",
+                          NSStringFromSize(desiredSize), NSStringFromSize(actualSize))
+                    if let newPosition = WindowCalculations.calculateResizedWindowPosition(
+                           corner: corner,
+                           initialPosition: initialPosition,
+                           initialSize: initialSize,
+                           actualSize: desiredSize
+                       ) {
+                        setPosition(newPosition)
+                    }
+                    window.size = desiredSize
+                    actualSize = window.size ?? actualSize
+                }
+
+                // Catastrophic clamp: macOS made an axis SMALLER than BOTH its current and
+                // its desired value. (Comparing against current alone misfires on mixed-axis
+                // resizes — growing width while deliberately shrinking height — and the bogus
+                // rollback emitted an off-screen transient rect. Found by gesture fuzzing.)
+                if actualSize.width < min(currentSize.width, desiredSize.width) - epsilon ||
+                   actualSize.height < min(currentSize.height, desiredSize.height) - epsilon {
+                    NSLog("[ModMove] resize: catastrophic clamp (current: %@, desired: %@, actual: %@), rolling back",
+                          NSStringFromSize(currentSize), NSStringFromSize(desiredSize), NSStringFromSize(actualSize))
+                    // Restore SIZE first (size sets are reliable), so the position set that
+                    // follows describes the true final rect — never a stale-size transient.
+                    window.size = currentSize
+                    if let restorePosition = WindowCalculations.calculateResizedWindowPosition(
+                           corner: corner,
+                           initialPosition: initialPosition,
+                           initialSize: initialSize,
+                           actualSize: window.size ?? currentSize
+                       ) {
+                        setPosition(restorePosition)
+                    }
+                    return
+                }
+
+                // Keep the anchor corner fixed based on what actually happened.
+                if let correctedPosition = WindowCalculations.calculateResizedWindowPosition(
+                       corner: corner,
+                       initialPosition: initialPosition,
+                       initialSize: initialSize,
+                       actualSize: actualSize
+                   ) {
+                    setPosition(correctedPosition)
+                }
+            } else {
+                // Shrinking: set size (macOS may clamp to the window's minimum), then anchor
+                // the fixed corner using the size that was actually applied.
+                window.size = desiredSize
+                if let actualSize = window.size,
+                   let correctedPosition = WindowCalculations.calculateResizedWindowPosition(
+                       corner: corner,
+                       initialPosition: initialPosition,
+                       initialSize: initialSize,
+                       actualSize: actualSize
+                   ) {
+                    setPosition(correctedPosition)
+                }
+            }
+        } else {
+            // BottomRight: only changes size, no position adjustment needed
+            window.size = desiredSize
+        }
+    }
+
+    /// Detects the WindowServer applying a position wildly different from what we requested
+    /// (teleport — observed on macOS 26.5 for rects straddling two displays) and restores
+    /// the pre-frame rect. The pre-frame rect was achievable (the window WAS there), so
+    /// restoring it is safe: set position first (a valid on-screen origin), then size.
+    private static func verifyAndRepair(
+        window: WindowControlling,
+        lastRequestedPosition: CGPoint?,
+        preFramePosition: CGPoint,
+        preFrameSize: CGSize
+    ) {
+        guard let requested = lastRequestedPosition, let actual = window.position else { return }
+        if abs(actual.x - requested.x) > teleportTolerance ||
+           abs(actual.y - requested.y) > teleportTolerance {
+            NSLog("[ModMove] resize: WindowServer teleported window (requested: %@, actual: %@), restoring pre-frame rect %@ %@",
+                  NSStringFromPoint(requested), NSStringFromPoint(actual),
+                  NSStringFromPoint(preFramePosition), NSStringFromSize(preFrameSize))
+            window.position = preFramePosition
+            window.size = preFrameSize
+            window.position = preFramePosition
+        }
+    }
+}
+
 final class Mover {
     var state: FlagState = .Ignore {
         didSet {
@@ -24,7 +188,8 @@ final class Mover {
     private var initialWindowSize: CGSize?
     private var closestCorner: Corner?
     private var window: AccessibilityElement?
-    private var frame: NSRect?
+    private var frame: NSRect?        // Constraint frame for MOVES (desktop bounding frame)
+    private var resizeFrame: NSRect?  // Constraint frame for RESIZES (single screen when Displays-have-separate-Spaces)
     private var scaleFactor: CGFloat?
 
     private var prevMousePosition: CGPoint?
@@ -78,7 +243,7 @@ final class Mover {
                 self.initialWindowPosition = window.position
                 self.initialWindowSize = window.size
                 self.closestCorner = self.getClosestCorner(window: window, mouse: initialMousePos)
-                (self.frame, self.scaleFactor) = getUsableScreen()
+                (self.frame, self.resizeFrame, self.scaleFactor) = getUsableScreen()
 
                 let currentPid = NSRunningApplication.current.processIdentifier
                 if let pid = window.pid(), pid != currentPid {
@@ -117,15 +282,22 @@ final class Mover {
         }
     }
 
-    private func getUsableScreen(windowPos: CGPoint? = nil) -> (NSRect, CGFloat) {
+    /// Returns (moveFrame, resizeFrame, scaleFactor).
+    ///
+    /// - moveFrame: desktop bounding frame. Windows can always be MOVED between displays,
+    ///   so shared screen edges never constrain moves; only the outer desktop perimeter does.
+    /// - resizeFrame: same desktop frame when all displays share one Space, but the SINGLE
+    ///   containing screen when "Displays have separate Spaces" is enabled — macOS refuses
+    ///   display-spanning windows in that mode, so the shared edge is a real wall for resizes.
+    private func getUsableScreen(windowPos: CGPoint? = nil, windowSize: CGSize? = nil) -> (NSRect, NSRect, CGFloat) {
         // Find the screen that contains the window (supports multi-monitor setups)
         // Use provided position or fall back to initial position
         guard let pos = windowPos ?? self.initialWindowPosition else {
             // Fallback to main screen if we don't have window position yet
             if let main = NSScreen.main {
-                return (main.visibleFrame, main.backingScaleFactor)
+                return (main.visibleFrame, main.visibleFrame, main.backingScaleFactor)
             }
-            return (NSRect.zero, 1)
+            return (NSRect.zero, NSRect.zero, 1)
         }
 
         // Convert window position from Accessibility API coordinates (top-left origin)
@@ -143,28 +315,50 @@ final class Mover {
         // to "sink" past the real screen boundary during move/resize.
 
         // The primary screen is the one anchored at the NSScreen origin (0, 0).
-        let primaryScreen = NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first
-        let primaryScreenHeight = primaryScreen?.frame.height ?? 0
+        let (screenInfos, primaryScreenHeight) = self.screenConfiguration()
 
-        let screenInfos = NSScreen.screens.map {
-            ScreenInfo(frame: $0.frame, visibleFrame: $0.visibleFrame, backingScaleFactor: $0.backingScaleFactor)
-        }
-
-        if let result = WindowCalculations.findUsableScreen(
-            windowPosition: pos,
+        // Constrain moves against the WHOLE desktop, not the single screen the window
+        // sits on. Constraining to one screen turns the edge shared with an adjacent
+        // screen into a hard wall — that's what pins a window at the top edge of a
+        // bottom screen. See WindowCalculations.desktopBoundingFrame.
+        let desktopFrame = WindowCalculations.desktopBoundingFrame(
             screens: screenInfos,
             primaryScreenHeight: primaryScreenHeight
-        ) {
-            return result
+        )
+
+        // Screen lookups use the window's RECT (overlap-based), not its origin point:
+        // an origin exactly on a shared screen edge is ambiguous between two screens,
+        // and picking the wrong one made the sticky-edge caps yank the window
+        // (the "snaps to half height" bug).
+        let size = windowSize ?? self.initialWindowSize ?? CGSize(width: 1, height: 1)
+        let windowRect = NSRect(origin: pos, size: size)
+
+        // Resizes treat shared screen edges as walls (the WindowServer teleports windows
+        // whose origin is set into the straddling strip — see resizeConstraintFrame docs).
+        let resizeFrame = WindowCalculations.resizeConstraintFrame(
+            windowRect: windowRect,
+            screens: screenInfos,
+            primaryScreenHeight: primaryScreenHeight
+        )
+
+        // Mouse-speed normalization uses the scale factor of the screen the window is on.
+        let scaleFactor = WindowCalculations.screenContaining(
+            windowRect: windowRect,
+            screens: screenInfos,
+            primaryScreenHeight: primaryScreenHeight
+        )?.scaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+
+        if desktopFrame != .zero {
+            return (desktopFrame, resizeFrame, scaleFactor)
         }
 
-        // Fallback to main screen if window position isn't on any screen
+        // Fallback to main screen if we somehow have no screens
         if let main = NSScreen.main {
             let mainInfo = ScreenInfo(frame: main.frame, visibleFrame: main.visibleFrame, backingScaleFactor: main.backingScaleFactor)
             let accessibilityFrame = WindowCalculations.accessibilityVisibleFrame(for: mainInfo, primaryScreenHeight: primaryScreenHeight)
-            return (accessibilityFrame, main.backingScaleFactor)
+            return (accessibilityFrame, accessibilityFrame, main.backingScaleFactor)
         }
-        return (NSRect.zero, 1)
+        return (NSRect.zero, NSRect.zero, 1)
     }
 
     private func getClosestCorner(window: AccessibilityElement, mouse: CGPoint) -> Corner {
@@ -182,7 +376,7 @@ final class Mover {
         guard let initWinSize = self.initialWindowSize,
               let initWinPos = self.initialWindowPosition,
               let corner = self.closestCorner,
-              let frame = self.frame else {
+              let frame = self.resizeFrame else {
             return
         }
 
@@ -193,10 +387,17 @@ final class Mover {
         }
         lastUpdateTime = now
 
-        // Determine if we should constrain based on speed
+        // Determine if we should constrain based on speed and current position.
+        // A window outside (or straddling an edge of) the constraint frame is never
+        // yanked back — same semantics as moves.
+        let currentPosition = window.position ?? initWinPos
+        let currentWindowSize = window.size ?? initWinSize
+        let currentRect = NSRect(origin: currentPosition, size: currentWindowSize)
         let shouldConstrain = WindowCalculations.shouldConstrainResize(
             mouseSpeed: self.mouseSpeed,
-            speedThreshold: FAST_MOUSE_SPEED_THRESHOLD
+            speedThreshold: FAST_MOUSE_SPEED_THRESHOLD,
+            currentWindowRect: currentRect,
+            screenFrame: frame
         )
 
         // Calculate constrained delta
@@ -216,57 +417,35 @@ final class Mover {
             delta: constrainedDelta
         )
 
-        // CRITICAL: Avoid stutter at minimum size by only updating position when size actually changes
-        // Strategy: Try size change first, then update position based on what actually happened
+        // Position sets are only reliable for windows entirely on one screen (probed:
+        // straddling/cross-screen position sets get teleported by the WindowServer).
+        let (screenInfos, primaryScreenHeight) = self.screenConfiguration()
+        let positionSetsAreReliable = WindowCalculations.isEntirelyOnOneScreen(
+            windowRect: currentRect,
+            screens: screenInfos,
+            primaryScreenHeight: primaryScreenHeight
+        )
 
-        let needsPositionUpdate = (corner == .TopLeft || corner == .TopRight || corner == .BottomLeft)
-        let currentSize = window.size ?? initWinSize
+        ResizeFrameApplier.apply(
+            window: window,
+            corner: corner,
+            initialPosition: initWinPos,
+            initialSize: initWinSize,
+            desiredSize: desiredSize,
+            currentPosition: currentPosition,
+            currentSize: currentWindowSize,
+            positionSetsAreReliable: positionSetsAreReliable
+        )
+    }
 
-        // Special handling for corners that need position updates
-        if needsPositionUpdate {
-            // For screen-edge resize bug: optimistically set position first
-            // But ONLY if we're not already stuck at minimum size
-            let epsilon: CGFloat = 0.1
-
-            // Check if this resize would make the window smaller
-            let isGrowing = (desiredSize.width > currentSize.width || desiredSize.height > currentSize.height)
-
-            if isGrowing {
-                // Growing: safe to update position first (no minimum size constraint)
-                if let newPosition = WindowCalculations.calculateResizedWindowPosition(
-                       corner: corner,
-                       initialPosition: initWinPos,
-                       initialSize: initWinSize,
-                       actualSize: desiredSize
-                   ) {
-                    window.position = newPosition
-                }
-            }
-
-            // Set size - macOS may clamp to minimum
-            window.size = desiredSize
-
-            // Read back actual size and adjust position if needed
-            if let actualSize = window.size {
-                let sizeChanged = abs(actualSize.width - currentSize.width) > epsilon ||
-                                abs(actualSize.height - currentSize.height) > epsilon
-
-                // If shrinking or size changed, recalculate position based on actual size
-                if !isGrowing || sizeChanged {
-                    if let correctedPosition = WindowCalculations.calculateResizedWindowPosition(
-                           corner: corner,
-                           initialPosition: initWinPos,
-                           initialSize: initWinSize,
-                           actualSize: actualSize
-                       ) {
-                        window.position = correctedPosition
-                    }
-                }
-            }
-        } else {
-            // BottomRight: only changes size, no position adjustment needed
-            window.size = desiredSize
+    /// Current screen configuration in the form the pure calculation layer consumes.
+    private func screenConfiguration() -> ([ScreenInfo], CGFloat) {
+        let primaryScreen = NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.screens.first
+        let primaryScreenHeight = primaryScreen?.frame.height ?? 0
+        let screenInfos = NSScreen.screens.map {
+            ScreenInfo(frame: $0.frame, visibleFrame: $0.visibleFrame, backingScaleFactor: $0.backingScaleFactor)
         }
+        return (screenInfos, primaryScreenHeight)
     }
 
     private func moveWindow(window: AccessibilityElement, mouseDelta: CGPoint) {
@@ -339,7 +518,7 @@ final class Mover {
                 self.closestCorner = self.getClosestCorner(window: window, mouse: currentMousePos)
 
                 // Update screen frame in case we moved to a different monitor
-                (self.frame, self.scaleFactor) = getUsableScreen(windowPos: window.position)
+                (self.frame, self.resizeFrame, self.scaleFactor) = getUsableScreen(windowPos: window.position, windowSize: window.size)
             }
         }
 
@@ -372,6 +551,7 @@ final class Mover {
         self.mouseSpeed = 0
         self.prevTime = CACurrentMediaTime()
         self.frame = nil
+        self.resizeFrame = nil
         self.scaleFactor = nil
         self.lastUpdateTime = 0
     }

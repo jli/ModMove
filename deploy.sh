@@ -8,7 +8,10 @@ set -e
 #   - Launch-at-login items keep pointing at a valid app
 #   - Launch Services doesn't get confused by multiple bundles with the same ID
 #
-# For dev iteration (run from build/ without touching /Applications), use ./run.sh
+# Building is handled by `make deploy` (see Makefile) - this script only
+# kills stale instances, installs, launches, and verifies.
+#
+# For dev iteration (run from build/ without touching /Applications), use `make run`.
 
 # Colors for output
 RED='\033[0;31m'
@@ -27,7 +30,7 @@ echo ""
 # Check if build exists
 if [ ! -d "$APP_PATH" ]; then
     echo -e "${RED}Error: Build not found at ${APP_PATH}${NC}"
-    echo "Run ./build.sh first"
+    echo "Run 'make build' first (or just 'make deploy')"
     exit 1
 fi
 

@@ -1,8 +1,10 @@
 #!/bin/bash
 set -e
 
-# Dev workflow: build and run from ./build/ WITHOUT touching /Applications.
-# Use ./deploy.sh to install the canonical copy to /Applications/ModMove-jli.app
+# Dev workflow: run the build/ app WITHOUT touching /Applications.
+# Building is handled by `make run` (see Makefile) - this script only kills
+# stale instances, launches, and verifies. Use `make deploy` to install the
+# canonical copy to /Applications/ModMove-jli.app.
 #
 # NOTE: if the deployed copy has launch-at-login enabled, it will come back at
 # next login even while you're testing a build/ copy. Kill with: pkill -x ModMove
@@ -18,29 +20,19 @@ BUILD_DIR="$(pwd)/build"
 APP_PATH="${BUILD_DIR}/ModMove.app"
 
 echo -e "${BLUE}=== ModMove Debug Run ===${NC}"
-echo -e "${BLUE}(Runs from build directory - use ./deploy.sh for the canonical install)${NC}"
+echo -e "${BLUE}(Runs from build directory - use \`make deploy\` for the canonical install)${NC}"
 echo ""
-
-# Step 1: Build
-echo -e "${YELLOW}[1/3] Building ModMove (Release configuration)...${NC}"
-xcodebuild -project ModMove.xcodeproj \
-    -scheme ModMove \
-    -configuration Release \
-    clean build \
-    CONFIGURATION_BUILD_DIR="$BUILD_DIR" \
-    2>&1 | grep -E '(Building|Compiling|Linking|CodeSign|BUILD SUCCEEDED|BUILD FAILED|error:)' || true
 
 if [ ! -d "$APP_PATH" ]; then
-    echo -e "${RED}Build failed! App not found at ${APP_PATH}${NC}"
+    echo -e "${RED}Error: Build not found at ${APP_PATH}${NC}"
+    echo "Run 'make build' first (or just 'make run')"
     exit 1
 fi
-echo -e "${GREEN}  Build complete!${NC}"
-echo ""
 
-# Step 2: Kill ALL existing ModMove instances, regardless of bundle name/location.
+# Step 1: Kill ALL existing ModMove instances, regardless of bundle name/location.
 # NOTE: match by binary name (pkill -x), NOT by bundle path — dated/renamed
 # bundles like ModMove-jli-v0705.app would not match a path-based grep.
-echo -e "${YELLOW}[2/3] Stopping all ModMove instances...${NC}"
+echo -e "${YELLOW}[1/2] Stopping all ModMove instances...${NC}"
 if pgrep -x ModMove > /dev/null; then
     pgrep -x ModMove | while read -r pid; do
         echo "  Killing PID $pid: $(ps -p "$pid" -o command= 2>/dev/null || echo '?')"
@@ -58,8 +50,8 @@ else
 fi
 echo ""
 
-# Step 3: Launch from build directory and verify
-echo -e "${YELLOW}[3/3] Launching ModMove from ${APP_PATH}...${NC}"
+# Step 2: Launch from build directory and verify
+echo -e "${YELLOW}[2/2] Launching ModMove from ${APP_PATH}...${NC}"
 open "$APP_PATH"
 sleep 2
 
@@ -92,8 +84,8 @@ echo ""
 echo "Running from: ${APP_PATH}"
 echo ""
 echo "Tips:"
-echo "  ./logs.sh     - Stream debug logs"
-echo "  ./deploy.sh   - Install canonical copy to /Applications/ModMove-jli.app"
+echo "  make logs     - Stream debug logs"
+echo "  make deploy   - Install canonical copy to /Applications/ModMove-jli.app"
 echo ""
 echo "If gestures do nothing and logs are silent, the build/ copy may need"
 echo "Accessibility permission: System Settings → Privacy & Security → Accessibility"

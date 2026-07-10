@@ -30,6 +30,11 @@ struct WindowCalculations {
     /// Finds the screen that contains the given window position and returns its usable
     /// (visible) frame converted to Accessibility coordinates, along with its scale factor.
     ///
+    /// SUPERSEDED for constraint decisions by `screenContaining(windowRect:...)`: a point
+    /// exactly on the edge shared by two screens is contained by BOTH closed ranges, so this
+    /// returns whichever screen is listed first — ambiguous and order-dependent. Prefer
+    /// rect-overlap selection anywhere the result feeds sticky-edge constraints.
+    ///
     /// - Parameters:
     ///   - windowPosition: Window top-left in Accessibility coordinates.
     ///   - screens: All screens, in NSScreen coordinates.
@@ -74,6 +79,117 @@ struct WindowCalculations {
             width: screen.visibleFrame.width,
             height: screen.visibleFrame.height
         )
+    }
+
+    /// The bounding frame of the entire desktop (union of every screen's visible frame),
+    /// in Accessibility coordinates.
+    ///
+    /// Sticky-edge constraints for move/resize are applied against THIS frame rather than
+    /// a single screen. Constraining to one screen turns the edge shared with an adjacent
+    /// screen into a hard wall, which pins windows at internal boundaries (e.g. a window at
+    /// the top edge of a bottom screen can't be resized taller into the screen above, and a
+    /// window can't be slow-dragged from one monitor to another). Constraining to the desktop
+    /// bounding frame makes internal shared edges free; only the true outer perimeter of the
+    /// combined desktop constrains.
+    static func desktopBoundingFrame(
+        screens: [ScreenInfo],
+        primaryScreenHeight: CGFloat
+    ) -> NSRect {
+        var result: NSRect? = nil
+        for screen in screens {
+            let frame = accessibilityVisibleFrame(for: screen, primaryScreenHeight: primaryScreenHeight)
+            result = result.map { $0.union(frame) } ?? frame
+        }
+        return result ?? .zero
+    }
+
+    /// Finds the screen with the LARGEST overlap with the window's rect and returns its
+    /// visible frame in Accessibility coordinates plus its scale factor.
+    ///
+    /// This intentionally replaces point-based lookup (`findUsableScreen`) for constraint
+    /// decisions. Point-based lookup is ambiguous when the window's top-left sits EXACTLY on
+    /// the edge shared by two adjacent screens (both closed ranges contain it, and whichever
+    /// screen `NSScreen.screens` lists first wins). Picking the wrong screen put the window
+    /// "outside" the constraint frame and the sticky-edge caps yanked it violently (e.g. a
+    /// bottom-corner resize forced desiredHeight to 0 → the window snapped to its minimum
+    /// height). A window's BODY overlap is unambiguous.
+    static func screenContaining(
+        windowRect: NSRect,
+        screens: [ScreenInfo],
+        primaryScreenHeight: CGFloat
+    ) -> (frame: NSRect, scaleFactor: CGFloat)? {
+        var bestArea: CGFloat = 0
+        var best: (frame: NSRect, scaleFactor: CGFloat)? = nil
+        for screen in screens {
+            // Full screen frame in Accessibility coordinates.
+            let axTop = nsYToAccessibilityY(nsY: screen.frame.maxY, primaryScreenHeight: primaryScreenHeight)
+            let axFrame = NSRect(x: screen.frame.minX, y: axTop, width: screen.frame.width, height: screen.frame.height)
+            let overlap = axFrame.intersection(windowRect)
+            let area = overlap.isNull ? 0 : overlap.width * overlap.height
+            // Strictly greater: on an exact tie the earlier screen wins (deterministic).
+            if area > bestArea {
+                bestArea = area
+                best = (
+                    accessibilityVisibleFrame(for: screen, primaryScreenHeight: primaryScreenHeight),
+                    screen.backingScaleFactor
+                )
+            }
+        }
+        return best
+    }
+
+    /// Chooses the frame that resize constraints are applied against: ALWAYS the single
+    /// screen containing (most of) the window.
+    ///
+    /// Resizes must treat the edge shared with an adjacent screen as a REAL wall. Probed on
+    /// macOS 26.5 (see AGENTS.md): AX position sets whose rect would straddle two displays
+    /// are not applied faithfully — the WindowServer TELEPORTS the window (observed bounces
+    /// to y=31, y=231, or a snap to the destination screen edge), even with "Displays have
+    /// separate Spaces" disabled. Growing a window's top/left edge across a shared edge is
+    /// therefore impossible to do smoothly; attempting it is what mangled windows at the
+    /// shared edge ("snaps to half height"). Moves still use the desktop bounding frame —
+    /// cross-screen moves work because the WindowServer's snap lands the window on the
+    /// destination screen.
+    static func resizeConstraintFrame(
+        windowRect: NSRect,
+        screens: [ScreenInfo],
+        primaryScreenHeight: CGFloat
+    ) -> NSRect {
+        if let single = screenContaining(
+            windowRect: windowRect,
+            screens: screens,
+            primaryScreenHeight: primaryScreenHeight
+        ) {
+            return single.frame
+        }
+        return desktopBoundingFrame(screens: screens, primaryScreenHeight: primaryScreenHeight)
+    }
+
+    /// True if the window's rect lies entirely within a single screen's FULL frame.
+    ///
+    /// Position sets are only reliable for such windows (probed on macOS 26.5): setting a
+    /// position whose rect straddles displays — or moving a window between displays — makes
+    /// the WindowServer teleport it unpredictably. Windows already straddling screens must
+    /// therefore never receive position sets during resize.
+    static func isEntirelyOnOneScreen(
+        windowRect: NSRect,
+        screens: [ScreenInfo],
+        primaryScreenHeight: CGFloat
+    ) -> Bool {
+        return screens.contains { screen in
+            let axTop = nsYToAccessibilityY(nsY: screen.frame.maxY, primaryScreenHeight: primaryScreenHeight)
+            let axFrame = NSRect(x: screen.frame.minX, y: axTop, width: screen.frame.width, height: screen.frame.height)
+            // Sub-pixel tolerance: float drift at an exact edge must not flip a window
+            // into "straddling" (size-only) mode.
+            return axFrame.insetBy(dx: -0.5, dy: -0.5).contains(windowRect)
+        }
+    }
+
+    /// True if the actual size that macOS applied fell short of what we asked for in either
+    /// dimension. Used to detect the WindowServer clamping a resize (min window size, screen
+    /// edge, or refusing a display-spanning window).
+    static func sizeFellShort(of desired: CGSize, actual: CGSize, epsilon: CGFloat) -> Bool {
+        return actual.width < desired.width - epsilon || actual.height < desired.height - epsilon
     }
 
     // MARK: - Corner Detection
@@ -136,8 +252,10 @@ struct WindowCalculations {
             return false
         }
 
-        // Slow movements only constrained if window is inside screen bounds
-        return screenFrame.contains(currentWindowRect)
+        // Slow movements only constrained if window is inside screen bounds.
+        // Tolerance: anchor-fix arithmetic can leave a window a few 1e-14 outside the
+        // frame; exact containment would silently disable constraints (found by fuzzing).
+        return screenFrame.insetBy(dx: -0.5, dy: -0.5).contains(currentWindowRect)
     }
 
     // MARK: - Resize Constraints
@@ -184,13 +302,30 @@ struct WindowCalculations {
         return CGPoint(x: constrainedDx, y: constrainedDy)
     }
 
-    /// Determines if resize should be constrained based on speed.
-    /// Note: Resize only checks speed, not window position.
+    /// Determines if resize should be constrained based on speed and current position.
+    ///
+    /// Symmetric with `shouldConstrainMovement`: constraints may PREVENT a window from
+    /// leaving the frame, but must never YANK a window that is already (partially) outside
+    /// it. Without the containment check, a wrong or straddled constraint frame produces
+    /// forced deltas far beyond the mouse movement (e.g. desiredHeight driven to 0 → the
+    /// window snaps to its minimum height).
     static func shouldConstrainResize(
         mouseSpeed: CGFloat,
-        speedThreshold: CGFloat
+        speedThreshold: CGFloat,
+        currentWindowRect: NSRect,
+        screenFrame: NSRect
     ) -> Bool {
-        return mouseSpeed < speedThreshold
+        // Fast movements are never constrained
+        if mouseSpeed >= speedThreshold {
+            return false
+        }
+
+        // Slow movements only constrained if the window is inside the frame;
+        // a window outside (or straddling an edge) is never yanked back.
+        // Tolerance: anchor-fix arithmetic can leave a window a few 1e-14 outside the
+        // frame; exact containment would silently disable constraints (found by fuzzing:
+        // an "escaped" gate let unconstrained growth emit teleporting position sets).
+        return screenFrame.insetBy(dx: -0.5, dy: -0.5).contains(currentWindowRect)
     }
 
     // MARK: - Resize Size Calculations

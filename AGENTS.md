@@ -44,9 +44,8 @@ ModMove/
 │   ├── PositionSizeCalculationTests.swift
 │   └── ScreenCoordinateTests.swift
 ├── ModMove.xcodeproj/                 # Xcode build configuration
-├── Makefile                           # make run/test/logs/deploy/clean
-├── build.sh / deploy.sh / run.sh      # Build & deployment scripts (see SCRIPTS.md)
-├── logs.sh                            # Stream debug logs
+├── Makefile                           # make build/run/test/logs/deploy/clean (single entry point)
+├── deploy.sh / run.sh                 # Kill/launch/verify logic used by `make deploy`/`make run`
 ├── SCRIPTS.md                         # Script reference
 ├── CHANGELOG.md                       # Fork changelog
 ├── PERFORMANCE_ANALYSIS.md            # Performance analysis
@@ -97,7 +96,7 @@ ModMove/
    - All 83+ tests should pass
 
 4. **Only then test in real life**
-   - Build and run the app: `./run.sh` (see "Manual Testing Protocol" below)
+   - Build and run the app: `make run` (see "Manual Testing Protocol" below)
    - Manually verify the fix works as expected
    - Test edge cases and interaction with other features
 
@@ -109,25 +108,32 @@ This workflow ensures:
 
 ### Building & Running
 
+**Use `make` for everything** — it's the single entry point:
+
 ```bash
-# Dev iteration: build and run from ./build/ (kills ALL stale instances first)
-./run.sh
-
-# Canonical install: replace /Applications/ModMove-jli.app with current build
-./deploy.sh
-
-# Build only
-xcodebuild -scheme ModMove build   # or ./build.sh (Release)
+make build    # Build to build/ModMove.app - only rebuilds if sources changed
+make run      # make build, then kill stale instances and launch from build/
+make deploy   # make build, then install to /Applications/ModMove-jli.app
+make test     # Run the test suite
+make logs     # Stream debug logs
+make clean    # xcodebuild clean + rm -rf build/
 
 # Or in Xcode: open ModMove.xcodeproj and press Cmd+B
 ```
+
+`make build` is a real Make dependency rule (depends on every `.swift`/`.h`/`.m`
+file + the `.xcodeproj`), so `make run`/`make deploy` only invoke `xcodebuild`
+when something is actually stale. `run.sh`/`deploy.sh` remain as separate
+scripts (called by `make run`/`make deploy`) because they have real
+kill/launch/verify logic; everything simple (building, testing, logs) is
+inlined directly in the `Makefile`.
 
 `run.sh` never touches `/Applications`; `deploy.sh` always installs to the **stable
 path** `/Applications/ModMove-jli.app` (never dated copies — a stable bundle path
 keeps the Accessibility permission grant and launch-at-login item valid across
 redeploys).
 
-See `SCRIPTS.md` for the full script reference (`build.sh`, `deploy.sh`, `run.sh`, `logs.sh`, `Makefile` targets).
+See `SCRIPTS.md` for the full reference (`Makefile` targets, `deploy.sh`, `run.sh`).
 
 ### Running Tests
 
@@ -152,14 +158,14 @@ pkill -x ModMove
 # 2. Verify nothing is running
 pgrep -lx ModMove          # expect no output
 
-# 3. Build and launch (also kills stale instances itself)
-./run.sh                   # expect "✓ Exactly 1 instance running"
+# 3. Build (if needed) and launch (also kills stale instances itself)
+make run                   # expect "✓ Exactly 1 instance running"
 
 # 4. Verify which copy is running
 pgrep -x ModMove | xargs -I{} ps -p {} -o command=
 
 # 5. Stream logs in another terminal while testing gestures
-./logs.sh                  # expect "[ModMove] Got window - app: ..." during gestures
+make logs                  # expect "[ModMove] Got window - app: ..." during gestures
 ```
 
 Manual gesture test: hold ⌃⌥ + move mouse over a window → it moves;
@@ -184,10 +190,137 @@ The app requires Accessibility API access to manipulate windows. macOS will prom
 
 ### Screen Boundary Constraints
 
-- Windows stay within screen boundaries during move/resize (respects menu bar and dock)
+- Windows stay within the **desktop** boundary during move/resize (respects menu bar and dock)
 - Uses `NSScreen.visibleFrame` to determine usable screen area
 - Multi-monitor aware
 - Implementation: `WindowCalculations.calculateConstrainedMoveDelta()` and `calculateConstrainedResizeDelta()`
+
+**Constrain against the whole desktop, not a single screen** (fixed 2026-07-07):
+Sticky-edge constraints for MOVES are applied against `WindowCalculations.desktopBoundingFrame()`
+(the union of every screen's visible frame in Accessibility coords), NOT the single screen
+the window happens to sit on. Constraining to one screen turns the edge *shared* with an
+adjacent screen into a hard wall.
+
+- **Bug**: On a vertically stacked two-screen setup, a window at the top edge of the bottom
+  screen could not be resized taller (dragging the top edge up was clamped to ~0) and could
+  not be slow-dragged up into the screen above. Its top-left sat at the bottom screen's
+  `minY`, so the per-screen clamp floor was ~0.
+- **Fix (moves)**: Constrain against the desktop bounding frame so internal shared edges are
+  interior (never walls); only the true outer perimeter of the combined desktop constrains.
+- **Fix (resizes)**: `WindowCalculations.resizeConstraintFrame()` — ALWAYS the single screen
+  containing (most of) the window. See "WindowServer teleports" below for why resizes can
+  never cross a shared edge on modern macOS.
+- **Tradeoff**: For screens that aren't the same size/aligned, the bounding box can include
+  small "dead zones" not covered by any screen; a slow drag may enter them. This is minor and
+  far preferable to the wall bug (and fast-movement escape already allows going anywhere).
+- Pure + tested in `ScreenCoordinateTests.swift`.
+
+**Resize order-of-operations at screen edges** (fixed 2026-07-07 — another instance of the
+2025-12-06 lesson that AX call ORDER matters):
+
+- **Bug**: When growing a window across the shared edge between two screens, the old
+  "optimistically set position first, then size" flow moved the window's origin across the
+  edge BEFORE growing. macOS then clamped the size change to the sliver of the destination
+  screen, and the position "correction" anchored around that sliver — the window collapsed
+  to near-zero height.
+- **Fix** (`Mover.resizeWindow`, growing path):
+  1. Grow AWAY from the anchor first (`window.size` with the origin untouched — always
+     within the current screen).
+  2. If macOS clamped that (window against an OUTER edge — the 2025-12-06 case,
+     detected via `WindowCalculations.sizeFellShort`), retry position-first.
+  3. Then anchor-fix the position from the actual applied size.
+  4. If the applied size REGRESSED below the pre-frame size (catastrophic clamp, e.g.
+     macOS refusing a spanning window), roll the frame back (restore from `initWinPos`,
+     which is always on-screen) instead of anchoring around a sliver.
+- Clamp/fallback/rollback events are NSLogged — use `make logs` when diagnosing resize
+  behavior at screen edges.
+
+**Screen selection is by window-rect overlap; constraints never yank** (fixed 2026-07-08 —
+root cause of the original "can't resize at the shared edge" report AND the "snaps to half
+height" regression):
+
+- **Bug**: `findUsableScreen()` matched the window's top-left POINT with INCLUSIVE bounds.
+  A window at the top edge of the bottom screen has its origin EXACTLY on the shared edge —
+  contained by BOTH screens' closed ranges — so whichever screen `NSScreen.screens` lists
+  first won. When the TOP screen won, the constraint frame's `maxY` was the shared edge, and
+  the bottom-corner resize cap `min(dy, maxY - (pos.y + height))` FORCED `dy = -height`
+  regardless of the mouse → desiredHeight 0 → macOS clamped to the app's minimum height
+  ("snaps to half height").
+- **Fix 1**: `WindowCalculations.screenContaining(windowRect:)` selects the screen with the
+  LARGEST overlap with the window's rect — a window's body is unambiguous even when its
+  origin sits on an edge. All constraint/scale lookups use it.
+- **Fix 2 (defense in depth)**: `shouldConstrainResize` now takes the current window rect and
+  frame, symmetric with `shouldConstrainMovement`: constraints may PREVENT a window from
+  leaving the frame but never YANK a window already (partially) outside it. Even a wrongly
+  selected frame now degrades to "unconstrained", never to a forced delta.
+- Regression tests in `ScreenCoordinateTests.swift`
+  (`testResizeAtSharedEdge_BottomCornerDelta_NotYanked` and friends).
+
+**WindowServer teleports: resizes never cross shared screen edges** (fixed 2026-07-08, the
+final fix for the shared-edge saga — PROBED empirically, see `scripts/ax-probe.swift`):
+
+- **Measured OS behavior (macOS 26.5)**: AX size sets apply faithfully, but AX position sets
+  whose rect would STRADDLE two displays are NOT applied — the WindowServer TELEPORTS the
+  window somewhere unpredictable (observed: y=31 or y=231 on the origin screen, or a snap to
+  the destination screen's edge) while still returning `.success`. Position sets fully on a
+  DIFFERENT screen also bounce. Only same-screen position sets are reliable. This holds even
+  with "Displays have separate Spaces" DISABLED.
+- **Consequence**: growing a window's top/left edge across a shared screen edge is impossible
+  to do smoothly. Attempting it (per-frame anchor-fix position sets in the straddling strip)
+  is what teleported/mangled windows at the shared edge ("snaps to half height" — the window
+  was literally teleported to the other screen and then fought over).
+- **Fix 1**: resize constraint frame is always the single containing screen — the shared edge
+  is an honest wall for resizes. (Moves still cross edges: the WindowServer's snap conveniently
+  lands the window on the destination screen.)
+- **Fix 2 (defense in depth)**: `ResizeFrameApplier.verifyAndRepair` — after each frame, if the
+  applied position deviates from the requested one by > 2px (teleport), restore the pre-frame
+  rect (which was achievable). Protects the unconstrained fast-resize path too.
+- **Architecture**: the per-frame resize orchestration now lives in `ResizeFrameApplier`
+  operating on the `WindowControlling` protocol, so it is unit-tested against
+  `FakeMacOS26Window` — a simulated WindowServer implementing the PROBED teleport laws
+  (`ResizeOrchestrationTests` in `PositionSizeCalculationTests.swift`). These tests were
+  verified to FAIL against the previous logic (10 teleports, window flung to y=31) before
+  the fix was applied.
+- **Diagnosing OS behavior**: don't guess — probe. `scripts/ax-probe.swift` drives AX
+  position/size sets against a real TextEdit window and prints what the WindowServer actually
+  did. Re-run it when a new macOS version changes window management behavior.
+- **Straddling windows** (already spanning two screens, e.g. thrown there): EVERY position
+  set is unreliable for them — including a rollback. Resize degrades to size-only
+  (`positionSetsAreReliable` in `ResizeFrameApplier.apply`); if a gesture shrinks the window
+  back onto one screen, normal resizing resumes.
+
+### Property-Based Gesture Fuzzing (added 2026-07-09)
+
+`ResizePropertyTests` is a test GENERATOR: a seeded deterministic RNG (SplitMix64) creates
+hundreds of random screen layouts (single / stacked above / stacked below / side-by-side),
+window placements, corners, speeds, and 12-frame random-walk gestures, then runs the REAL
+production pipeline against `FakeMacOS26Window` and checks frame-by-frame invariants:
+
+- **I1**: a frame never ends with the window teleported (sentinel position).
+- **I2**: the window never shrinks below the app's minimum size.
+- **I3**: slow (constrained) gestures emit ZERO teleporting position sets and keep the
+  window inside its screen's visible frame.
+- **I4**: the anchor corner (opposite the grabbed corner) never drifts, at any speed.
+- Straddling starts: while straddling, resize is size-only (origin frozen, no position
+  sets); normal resizing may resume once the window is back on one screen.
+
+Failures print the seed — re-run with that seed to reproduce exactly. Bugs found by the
+fuzzer on day one (each then fixed + pinned with a deterministic regression test):
+
+1. **Mixed-axis catastrophic-clamp misfire**: growing width while shrinking height (a
+   normal diagonal drag) tripped the "macOS clamped us" rollback because the check compared
+   only against the CURRENT size. Fix: an axis is catastrophic only if actual <
+   min(current, desired). Rollback also now restores size BEFORE position so no stale-size
+   transient rect is ever emitted.
+2. **Float-drift gate escape**: anchor-fix arithmetic can land a window 1e-14 outside the
+   visible frame; exact `contains()` then silently DISABLED constraints, letting
+   unconstrained growth emit teleporting position sets. Fix: containment gates
+   (`shouldConstrainResize`, `shouldConstrainMovement`, `isEntirelyOnOneScreen`) use 0.5px
+   tolerance.
+
+When adding resize/move behavior, extend the invariants (or add a new generator) rather
+than only writing example-based tests — the fuzzer found in seconds what three rounds of
+example-based testing missed.
 
 ### Multi-Monitor Coordinate Conversion (single-Space setups)
 
@@ -275,7 +408,9 @@ Priority 1 (identified but not yet implemented):
 
 ### Test Coverage
 
-83 tests organized into 5 suites:
+110 tests organized into 8 suites (incl. `ResizeOrchestrationTests`, `ResizeEdgeCaseTests`
+and `ResizePropertyTests`, which run the real constraint→gate→delta→apply pipeline against
+a simulated WindowServer):
 
 1. **CornerDetectionTests** (11 tests)
    - All corner quadrants
@@ -378,7 +513,7 @@ Do NOT grep the process list for `ModMove.app` — renamed bundles (e.g.
 `ModMove-jli.app`) won't match, and you'll miss exactly the instances causing
 the bug.
 
-**Prevention:** Use `./run.sh` or `./deploy.sh`, which kill ALL instances (by
+**Prevention:** Use `make run` or `make deploy`, which kill ALL instances (by
 binary name) before launching.
 
 **Why it happens:**
