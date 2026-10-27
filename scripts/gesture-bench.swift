@@ -3,6 +3,7 @@
 //
 //   swiftc -O scripts/gesture-bench.swift -o /tmp/gesture-bench
 //   /tmp/gesture-bench "Google Chrome" <titleSubstring> move|resize <amplitudePx> <durationSec> [eventHz]
+//   /tmp/gesture-bench TextEdit Untitled native <amplitudePx> <durationSec>   # titlebar-drag baseline
 //
 // Run exactly ONE ModMove instance. The terminal needs Accessibility permission. The target window
 // is moved to (100,150) and raised first; keep it clear of screen edges so sticky edges don't
@@ -34,13 +35,19 @@ var wid: CGWindowID = 0; _ = _AXUIElementGetWindow(w, &wid)
 setP(w, CGPoint(x: 100, y: 150)); r.activate(options: .activateIgnoringOtherApps); AXUIElementPerformAction(w, kAXRaiseAction as CFString); usleep(200_000)
 if ProcessInfo.processInfo.environment["NOACT"] != nil { NSWorkspace.shared.runningApplications.first { $0.localizedName == "Finder" }!.activate(options: .activateIgnoringOtherApps) }; usleep(200_000)
 let p0 = getP(w), s0 = getS(w)
-let mouseStart = mode == "move" ? CGPoint(x: p0.x + s0.width / 4, y: p0.y + s0.height / 2)
+// "native" = a real titlebar drag (mouse down/drag/up, no ModMove) as the smoothness baseline.
+// It CLICKS, so it's restricted to TextEdit — never click into a browser.
+let native = mode == "native"
+if native && name != "TextEdit" { print("native mode clicks the title bar; TextEdit only"); exit(1) }
+let mouseStart = native ? CGPoint(x: p0.x + s0.width / 2, y: p0.y + 12)
+               : mode == "move" ? CGPoint(x: p0.x + s0.width / 4, y: p0.y + s0.height / 2)
                                 : CGPoint(x: p0.x + s0.width - 30, y: p0.y + s0.height - 30)
 
-let flags: CGEventFlags = mode == "move" ? [.maskControl, .maskAlternate] : [.maskControl, .maskAlternate, .maskShift]
-let keys: [CGKeyCode] = mode == "move" ? [0x3B, 0x3A] : [0x3B, 0x3A, 0x38]
+let flags: CGEventFlags = native ? [] : mode == "move" ? [.maskControl, .maskAlternate] : [.maskControl, .maskAlternate, .maskShift]
+let keys: [CGKeyCode] = native ? [] : mode == "move" ? [0x3B, 0x3A] : [0x3B, 0x3A, 0x38]
 func key(_ k: CGKeyCode, _ down: Bool, _ f: CGEventFlags) { let e = CGEvent(keyboardEventSource: nil, virtualKey: k, keyDown: down)!; e.flags = f; e.post(tap: .cghidEventTap) }
-func mouse(_ p: CGPoint, _ f: CGEventFlags) { let e = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)!; e.flags = f; e.post(tap: .cghidEventTap) }
+func button(_ type: CGEventType, _ p: CGPoint) { CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)!.post(tap: .cghidEventTap) }
+func mouse(_ p: CGPoint, _ f: CGEventFlags) { let e = CGEvent(mouseEventSource: nil, mouseType: native ? .leftMouseDragged : .mouseMoved, mouseCursorPosition: p, mouseButton: .left)!; e.flags = f; e.post(tap: .cghidEventTap) }
 func releaseKeys() { for k in keys.reversed() { key(k, false, []) } }
 signal(SIGINT) { _ in releaseKeys(); exit(1) }
 
@@ -62,6 +69,7 @@ usleep(100_000)
 var acc: CGEventFlags = []
 for (i, k) in keys.enumerated() { acc.insert([CGEventFlags.maskControl, .maskAlternate, .maskShift][i]); key(k, true, acc); usleep(20_000) }
 usleep(80_000)
+if native { button(.leftMouseDown, mouseStart) }
 mouse(CGPoint(x: mouseStart.x, y: mouseStart.y + 1), flags)  // first event grabs the window
 usleep(80_000)
 sampler.start()
@@ -76,6 +84,7 @@ while true {
     usleep(UInt32(1_000_000 / hz))
 }
 usleep(200_000)
+if native { button(.leftMouseUp, CGPoint(x: mouseStart.x, y: mouseStart.y + 1)) }
 releaseKeys()
 usleep(100_000)
 sampling = false
@@ -83,7 +92,7 @@ usleep(10_000)
 setS(w, s0); setP(w, p0)
 
 // Analysis: the window coordinate that tracks the mouse
-func coord(_ r: CGRect) -> CGFloat { mode == "move" ? r.minX : r.width }
+func coord(_ r: CGRect) -> CGFloat { mode == "resize" ? r.width : r.minX }
 let base = coord(CGRect(origin: p0, size: s0))
 let upd = samples.filter { $0.0 >= t0 && $0.0 <= t0 + dur }
 let intervals = zip(upd.dropFirst(), upd).map { ($0.0 - $1.0) * 1000 }.sorted()

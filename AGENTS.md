@@ -342,6 +342,26 @@ Also tried, no/limited value:
 - Deferring activation to gesture END: fixes cause 2 only if the target wasn't already active
   (the common case is that it is), and a background window then moves BEHIND other apps' windows.
 
+**Remaining gap to a native titlebar drag (measured 2026-10-27).** `gesture-bench ... native`
+(a real titlebar drag on TextEdit) shows the window ~5ms behind the mouse; ModMove moves are
+~28ms behind, for both TextEdit and Chrome, slow or fast. Breakdown from timestamps on the shared
+system clock (TextEdit, median):
+
+| Stage | Time |
+|---|---|
+| mouse event posted → ModMove receives it | 1.5ms |
+| receive → AX position set (FramePacer wait) | 6ms |
+| AX set call | 0.6ms |
+| **AX set returns → WindowServer shows the new position** | **21ms** |
+
+The last step is the target app committing its window move to the WindowServer. Streaming AX
+sets from a plain process takes ~7ms there, but ~13–14ms (p90 21ms) when mouse events stream at
+100Hz at the same time. During a native drag the WindowServer moves the window itself and skips
+the app entirely. Tried: applying the first event of each refresh immediately instead of waiting
+for the display-link tick: **no measurable change** (28ms), so reverted. Most of the lag is
+outside ModMove; the remaining levers are prediction (extrapolate the mouse ~1–2 frames ahead)
+or making the WindowServer perform the drag itself.
+
 **Regression found after deploy (fixed same day): gestures did nothing with real input.** Once
 the tap swallows HARDWARE mouse moves, global state stops tracking them:
 `CGEvent(source: nil).location` stays frozen (logged: frozen at (1605,1125) while the event's
