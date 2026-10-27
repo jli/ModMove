@@ -182,7 +182,10 @@ final class Mover {
         }
     }
 
-    private var monitor: Any?
+    /// Handler for the current mode; nil while no gesture is active.
+    private var frameHandler: ((_ window: AccessibilityElement, _ mouseDelta: CGPoint) -> Void)?
+    private var mouseTap: MouseMoveTap?
+    private let framePacer = FramePacer()
     private var initialMousePosition: CGPoint?
     private var initialWindowPosition: CGPoint?
     private var initialWindowSize: CGSize?
@@ -200,11 +203,17 @@ final class Mover {
     // Weight given to latest mouse speed for averaging.
     private let MOUSE_SPEED_WEIGHT: CGFloat = 0.1
 
-    // Throttle position updates to 50fps for better performance with heavy apps
-    private var lastUpdateTime: CFTimeInterval = 0
-    private let UPDATE_INTERVAL: CFTimeInterval = 0.020  // ~50fps (20ms)
+    init() {
+        self.mouseTap = MouseMoveTap { [unowned self] in
+            guard let handler = self.frameHandler else {
+                return false
+            }
+            self.mouseMoved(handler: handler)
+            return true
+        }
+    }
 
-    private func mouseMoved(handler: (_ window: AccessibilityElement, _ mouseDelta: CGPoint) -> Void) {
+    private func mouseMoved(handler: @escaping (_ window: AccessibilityElement, _ mouseDelta: CGPoint) -> Void) {
         // Defensive check: verify modifier keys are still pressed
         // This prevents stuck drag/resize if flagsChanged event is missed
         // IMPORTANT: Only check this AFTER we've grabbed a window, not before
@@ -216,7 +225,7 @@ final class Mover {
 
             // If modifiers were released, stop immediately
             if !hasControl || !hasOption {
-                self.removeMonitor()
+                self.frameHandler = nil
                 self.resetState()
                 return
             }
@@ -264,7 +273,8 @@ final class Mover {
         let curMousePos = Mouse.currentPosition()
         self.trackMouseSpeed(curMousePos: curMousePos)
         let mouseDelta = CGPoint(x: curMousePos.x - initMousePos.x, y: curMousePos.y - initMousePos.y)
-        handler(window, mouseDelta)
+        // Apply at most once per display refresh, always with the latest mouse position.
+        self.framePacer.submit { handler(window, mouseDelta) }
     }
 
     private func trackMouseSpeed(curMousePos: CGPoint) {
@@ -380,13 +390,6 @@ final class Mover {
             return
         }
 
-        // Throttle updates to 50fps for better performance
-        let now = CACurrentMediaTime()
-        if now - lastUpdateTime < UPDATE_INTERVAL {
-            return
-        }
-        lastUpdateTime = now
-
         // Determine if we should constrain based on speed and current position.
         // A window outside (or straddling an edge of) the constraint frame is never
         // yanked back — same semantics as moves.
@@ -455,13 +458,6 @@ final class Mover {
             return
         }
 
-        // Throttle updates to 50fps for better performance
-        let now = CACurrentMediaTime()
-        if now - lastUpdateTime < UPDATE_INTERVAL {
-            return
-        }
-        lastUpdateTime = now
-
         // Determine if we should constrain based on speed and current position
         let shouldConstrain = self.shouldConstrainMouseDelta(window)
 
@@ -500,8 +496,10 @@ final class Mover {
         // But keep the same window
         let shouldKeepWindow = (self.window != nil && state != .Ignore)
 
-        // Always remove old monitor
-        self.removeMonitor()
+        // Drop any frame queued under the old mode: it was computed against the initial
+        // positions we're about to reset, and would jump the window.
+        self.frameHandler = nil
+        self.framePacer.stop()
 
         // If switching modes mid-gesture, reset initial positions to current state
         // This prevents jump because our reference point is now where the window currently is
@@ -529,13 +527,9 @@ final class Mover {
 
         switch state {
         case .Resize:
-            self.monitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { _ in
-                self.mouseMoved(handler: self.resizeWindow)
-            }
+            self.frameHandler = { [unowned self] in self.resizeWindow(window: $0, mouseDelta: $1) }
         case .Drag:
-            self.monitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { _ in
-                self.mouseMoved(handler: self.moveWindow)
-            }
+            self.frameHandler = { [unowned self] in self.moveWindow(window: $0, mouseDelta: $1) }
         case .Ignore:
             break
         }
@@ -553,17 +547,6 @@ final class Mover {
         self.frame = nil
         self.resizeFrame = nil
         self.scaleFactor = nil
-        self.lastUpdateTime = 0
-    }
-
-    private func removeMonitor() {
-        if let monitor = self.monitor {
-            NSEvent.removeMonitor(monitor)
-        }
-        self.monitor = nil
-    }
-
-    deinit {
-        self.removeMonitor()
+        self.framePacer.stop()
     }
 }

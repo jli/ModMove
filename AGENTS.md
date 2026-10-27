@@ -29,6 +29,7 @@ ModMove/
 │   ├── AppDelegate.swift              # App entry point, initialization
 │   ├── Observer.swift                 # Keyboard modifier state monitoring
 │   ├── Mover.swift                    # Core move/resize orchestration
+│   ├── GestureInput.swift             # Mouse event tap + display-synced frame pacing
 │   ├── WindowCalculations.swift       # Pure functional core (testable logic)
 │   ├── Mouse.swift                    # Mouse position utility
 │   ├── AccessibilityElement.swift     # Wrapper for AXUIElement API
@@ -60,10 +61,10 @@ ModMove/
    - Notifies Mover when state changes
 
 2. **Mover.swift**: Core window manipulation orchestration
-   - Tracks mouse movement via `NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved)`
+   - Tracks mouse movement via `MouseMoveTap` (a CGEventTap that swallows mouse moves during a gesture)
    - Uses Accessibility API to get/set window position and size
    - Delegates calculations to WindowCalculations
-   - Implements throttling (50fps) for performance
+   - Applies at most one frame per display refresh via `FramePacer` (latest mouse position wins)
 
 3. **WindowCalculations.swift**: Pure functional core (added 2025-12-06)
    - All calculation logic extracted into pure, testable functions
@@ -289,6 +290,62 @@ final fix for the shared-edge saga — PROBED empirically, see `scripts/ax-probe
   (`positionSetsAreReliable` in `ResizeFrameApplier.apply`); if a gesture shrinks the window
   back onto one screen, normal resizing resumes.
 
+### Gesture smoothness (investigated 2026-10-27, macOS 26.7, 60Hz display)
+
+Report: "resizing — and moving — Chrome windows is jankier than a native drag." Measured with
+`scripts/gesture-bench.swift` (drives a real gesture, samples WindowServer frames at ~2kHz) and
+`sample` on Chrome's main thread. Two independent root causes:
+
+1. **The 20ms throttle ran at ~30fps, for every app.** It was a leading-edge throttle against a
+   ~100Hz event stream: with event jitter, two of every three events landed <20ms after the last
+   update, so windows updated every ~33ms (half the refresh rate) with frequent 2–4-frame stalls.
+   **Fix:** `FramePacer` — mouse events only record the latest position; a display link applies
+   it once per refresh.
+2. **Chrome's main thread is saturated by cursor updates, and our AX calls queue behind them.**
+   AX position/size sets are serviced on the target app's main thread. While the target app is
+   ACTIVE, AppKit runs `cursorUpdate:` → `[NSCursor set]` on every mouse move and on every window
+   frame change under the cursor. With a customized pointer (Accessibility → Display → Pointer
+   size/colors), macOS 26 re-renders the system cursor (PDF draw + blur + recolor) on EVERY set,
+   with no caching: ~3–5ms per `NSCursor.arrow.set()`, even when re-setting the same cursor.
+   Chrome re-sets the cursor constantly; TextEdit doesn't, so TextEdit is unaffected. Native
+   drags/live resizes don't deliver these events, which is why they stay smooth.
+   **Partial fix:** `MouseMoveTap` swallows mouse moves during a gesture (native-drag semantics),
+   removing the per-mouse-move half. The frame-change cursor updates remain while Chrome is active.
+
+Chrome, 3 runs each (updates/s · lag median · Chrome main-thread time per AX frame):
+
+| Variant | Move | Resize (400px) |
+|---|---|---|
+| Old (20ms throttle, global monitor) | 29/s · 42ms · 10.6ms | 20/s · 40–52ms · 18–23ms (p90 85) |
+| + FramePacer | 55/s · 40ms · 8.7ms | 20/s · ~50ms |
+| + MouseMoveTap (current code) | 57/s · 36ms · 4.7ms | 25–27/s · ~44ms · 10ms |
+| + target app INACTIVE during gesture (prototype only) | 57/s · 32ms · 1.0ms | 51/s · 32ms · 9ms |
+
+TextEdit (unaffected by cause 2): 30/s → 57/s from the FramePacer alone, ~30ms lag.
+
+**Cause 2 confirmed** by resetting the pointer to default (`cursorIsCustomized = 0`):
+`NSCursor.arrow.set()` went 4.3ms → 0.00ms, and Chrome with the current code reached move 57/s ·
+28ms lag (= TextEdit) and resize 37–43/s (old code: 30/s move, 26/s resize). The remaining resize
+gap is Chrome's own relayout per frame. If a user reports Chrome-only jank, ask whether their
+pointer is customized.
+
+Not adopted: making ModMove the active app during a gesture (activate the target to raise it, then
+yield activation, reactivate on release). It removes cause 2 entirely (resize 25→51/s), but the
+title bar flickers inactive, web pages get blur/focus events, and the raise-then-yield handoff
+raced in testing (the grabbed window sometimes stayed BEHIND the previously active app). `AXRaise`
+alone does NOT raise a background app's window above the active app's windows.
+
+Also tried, no/limited value:
+- Removing the per-frame `window.position`/`window.size` reads: no measurable change.
+- No throttle at all (apply on every event): same fps as `FramePacer`, but the handler then runs
+  per event — with Chrome at ~13ms/AX call and 125–1000Hz mice that saturates our main thread.
+- Deferring activation to gesture END: fixes cause 2 only if the target wasn't already active
+  (the common case is that it is), and a background window then moves BEHIND other apps' windows.
+
+Method notes: bench in a lab binary built from the real sources plus a tiny `main.swift`, launched
+from the terminal (it inherits the terminal's Accessibility grant — rebuilt ad-hoc-signed app
+bundles can lose theirs). Kill the deployed ModMove while benching, and RELAUNCH it afterwards.
+
 ### Property-Based Gesture Fuzzing (added 2026-07-09)
 
 `ResizePropertyTests` is a test GENERATOR: a seeded deterministic RNG (SplitMix64) creates
@@ -355,7 +412,7 @@ the primary then has a larger NSScreen `maxY` than the primary's height.
 - Absolute position tracking (not frame-to-frame delta)
 - Stores initial state and calculates relative to start position
 - Eliminates cumulative drift and jitter
-- Throttled to 50fps for performance
+- One frame per display refresh (`FramePacer`), not a fixed throttle — see "Gesture smoothness"
 
 ### Minimum Size Constraints
 
@@ -392,7 +449,7 @@ See `PERFORMANCE_ANALYSIS.md` for detailed analysis.
 
 ### Current Performance Profile
 
-- Throttled to 50fps (20ms update interval)
+- One update per display refresh (display link), always with the latest mouse position
 - Minimal Accessibility API calls during normal operation
 - Screen bounds calculated once per move/resize operation
 - Mouse speed tracking uses efficient exponential moving average
@@ -401,6 +458,8 @@ See `PERFORMANCE_ANALYSIS.md` for detailed analysis.
 
 Priority 1 (identified but not yet implemented):
 - Eliminate redundant `window.position` and `window.size` calls in `shouldConstrainMouseDelta()`
+  (measured 2026-10-27 with gesture-bench: no measurable effect on smoothness — reads are cheap
+  compared with the target app's own main-thread work)
 - Could save 120-240 Accessibility API calls/second during slow movements
 - Use cached values from last update instead
 
@@ -490,10 +549,11 @@ a simulated WindowServer):
 
 ### Deployment Target
 
-- **Current**: macOS 10.13 (High Sierra, 2017)
-- **Reasoning**: Updated from 10.11 to match Xcode's minimum supported version
-- **Impact**: Maintains excellent backwards compatibility (8+ years) while ensuring clean builds
-- **Changed**: 2025-12-06 - No code changes required, Info.plist uses `$(MACOSX_DEPLOYMENT_TARGET)` variable
+- **Current**: macOS 12.0 (Monterey)
+- **Reasoning**: Raised 2026-10-27 from 10.13 — the macOS 27 SDK's Xcode rejects anything below 12.0
+  (build error, not a warning). Previously raised from 10.11 for the same reason.
+- **Impact**: Drops macOS 10.13–11 support. `FramePacer` uses `NSScreen.displayLink` on 14+, a 60Hz timer below.
+- **Changed**: 2025-12-06, 2026-10-27 - No code changes required, Info.plist uses `$(MACOSX_DEPLOYMENT_TARGET)` variable
 
 ## Known Issues & Debugging
 

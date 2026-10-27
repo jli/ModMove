@@ -4,6 +4,23 @@ All notable changes to this fork of ModMove.
 
 ## [Unreleased]
 
+### Performance (2026-10-27)
+
+- Moves and resizes now update once per display refresh (`FramePacer`, display link) instead of
+  through a 20ms throttle that actually ran at ~30fps (it quantized against the ~100Hz mouse
+  event rate). Moves: 30 → 57 updates/s on a 60Hz display, stalls ~15 → ~1 per gesture.
+- During a gesture, mouse moves are consumed by an event tap (`MouseMoveTap`) instead of being
+  observed with a passive monitor, so the app under the cursor never sees them, the same as a
+  native drag. In Chrome each mouse move triggered cursor work on its main thread, which is
+  where our AX calls are serviced.
+- Chrome-specific jank root cause: with a customized pointer (Accessibility → Display → Pointer),
+  macOS 26 re-renders the system cursor on every `[NSCursor set]` (~4ms, uncached). Chrome
+  re-sets it on every cursor update. With the default pointer: Chrome resize 26 → 37–43/s,
+  move 30 → 57/s. With the customized pointer, resizes reach ~25/s. Full investigation,
+  numbers and rejected approaches are in AGENTS.md "Gesture smoothness".
+- Added `scripts/gesture-bench.swift` to measure gesture smoothness against real windows.
+- Deployment target raised 10.13 → 12.0 (current Xcode refuses to build lower targets).
+
 ### Bug Fixes (2026-07-07)
 
 - Fixed windows being pinned at the edge shared between vertically/horizontally adjacent

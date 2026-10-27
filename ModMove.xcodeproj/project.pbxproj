@@ -19,6 +19,7 @@
 		C27E73291BD9FFE70058FDD0 /* Observer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27E73281BD9FFE70058FDD0 /* Observer.swift */; };
 		C27E732B1BDA055E0058FDD0 /* Mover.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27E732A1BDA055E0058FDD0 /* Mover.swift */; };
 		C27E732D1BDA06A90058FDD0 /* AccessibilityElement.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27E732C1BDA06A90058FDD0 /* AccessibilityElement.swift */; };
+		A1B2C3D41E00000000000001 /* GestureInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D41E00000000000002 /* GestureInput.swift */; };
 		C27E732F1BDA08810058FDD0 /* Mouse.swift in Sources */ = {isa = PBXBuildFile; fileRef = C27E732E1BDA08810058FDD0 /* Mouse.swift */; };
 		C298327F1BDA160700852252 /* AXValue+Helper.swift in Sources */ = {isa = PBXBuildFile; fileRef = C298327E1BDA160700852252 /* AXValue+Helper.swift */; };
 		C2FA55CF1BDDA6A50040373D /* LoginController.m in Sources */ = {isa = PBXBuildFile; fileRef = C2FA55CE1BDDA6A50040373D /* LoginController.m */; };
@@ -51,6 +52,7 @@
 		C27E73281BD9FFE70058FDD0 /* Observer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Observer.swift; sourceTree = "<group>"; };
 		C27E732A1BDA055E0058FDD0 /* Mover.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Mover.swift; sourceTree = "<group>"; };
 		C27E732C1BDA06A90058FDD0 /* AccessibilityElement.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AccessibilityElement.swift; sourceTree = "<group>"; };
+		A1B2C3D41E00000000000002 /* GestureInput.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GestureInput.swift; sourceTree = "<group>"; };
 		C27E732E1BDA08810058FDD0 /* Mouse.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Mouse.swift; sourceTree = "<group>"; };
 		C298327E1BDA160700852252 /* AXValue+Helper.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "AXValue+Helper.swift"; sourceTree = "<group>"; };
 		C29A5C50B82ECC5763D7BD78 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
@@ -132,6 +134,7 @@
 				C2FA55D21BDDA9B00040373D /* LoginAlert.swift */,
 				C2FA55CD1BDDA6A50040373D /* LoginController.h */,
 				C2FA55CE1BDDA6A50040373D /* LoginController.m */,
+				A1B2C3D41E00000000000002 /* GestureInput.swift */,
 				C27E732E1BDA08810058FDD0 /* Mouse.swift */,
 				C27E732A1BDA055E0058FDD0 /* Mover.swift */,
 				C27E73281BD9FFE70058FDD0 /* Observer.swift */,
@@ -261,6 +264,7 @@
 				C298327F1BDA160700852252 /* AXValue+Helper.swift in Sources */,
 				C2FA55D31BDDA9B00040373D /* LoginAlert.swift in Sources */,
 				C27E731B1BD9FFB00058FDD0 /* AppDelegate.swift in Sources */,
+				A1B2C3D41E00000000000001 /* GestureInput.swift in Sources */,
 				C27E732F1BDA08810058FDD0 /* Mouse.swift in Sources */,
 				C2FA55D11BDDA7A30040373D /* AccessibilityHelper.swift in Sources */,
 				C27E73291BD9FFE70058FDD0 /* Observer.swift in Sources */,
@@ -315,7 +319,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.13;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -334,7 +338,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.13;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -375,7 +379,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.13;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -410,7 +414,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.13;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
 				SDKROOT = macosx;
 				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
 			};
