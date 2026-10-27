@@ -19,6 +19,9 @@ All notable changes to this fork of ModMove.
   move 30 → 57/s. With the customized pointer, resizes reach ~25/s. Full investigation,
   numbers and rejected approaches are in AGENTS.md "Gesture smoothness".
 - Added `scripts/gesture-bench.swift` to measure gesture smoothness against real windows.
+- Fixed gestures doing nothing with a real mouse/trackpad after the event-tap change: location
+  and modifier flags are now read from the tap's event. Global state (`CGEvent(source: nil).location`,
+  `NSEvent.modifierFlags`) goes stale once the tap swallows hardware moves.
 - Deployment target raised 10.13 → 12.0 (current Xcode refuses to build lower targets).
 
 ### Bug Fixes (2026-07-07)

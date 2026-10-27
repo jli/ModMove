@@ -204,24 +204,30 @@ final class Mover {
     private let MOUSE_SPEED_WEIGHT: CGFloat = 0.1
 
     init() {
-        self.mouseTap = MouseMoveTap { [unowned self] in
+        self.mouseTap = MouseMoveTap { [unowned self] location, flags in
+            self.lastMouseLocation = location
             guard let handler = self.frameHandler else {
                 return false
             }
-            self.mouseMoved(handler: handler)
+            self.mouseMoved(handler: handler, mouse: location, flags: flags)
             return true
         }
     }
 
-    private func mouseMoved(handler: @escaping (_ window: AccessibilityElement, _ mouseDelta: CGPoint) -> Void) {
+    /// Location of the most recent mouse move, from the event itself (see MouseMoveTap).
+    private var lastMouseLocation: CGPoint?
+
+    /// `mouse` and `flags` come from the mouse event itself — global state goes stale while the
+    /// tap swallows moves (see MouseMoveTap).
+    private func mouseMoved(handler: @escaping (_ window: AccessibilityElement, _ mouseDelta: CGPoint) -> Void,
+                            mouse: CGPoint, flags: CGEventFlags) {
         // Defensive check: verify modifier keys are still pressed
         // This prevents stuck drag/resize if flagsChanged event is missed
         // IMPORTANT: Only check this AFTER we've grabbed a window, not before
         // Otherwise we might reset mid-gesture and grab a different window
         if self.window != nil {
-            let currentFlags = NSEvent.modifierFlags
-            let hasControl = currentFlags.contains(.control)
-            let hasOption = currentFlags.contains(.option)
+            let hasControl = flags.contains(.maskControl)
+            let hasOption = flags.contains(.maskAlternate)
 
             // If modifiers were released, stop immediately
             if !hasControl || !hasOption {
@@ -234,7 +240,7 @@ final class Mover {
         // On first call: grab window and initial mouse position atomically
         // This prevents race condition where mouse moves before we grab the window
         if self.window == nil {
-            let initialMousePos = Mouse.currentPosition()
+            let initialMousePos = mouse
             self.window = AccessibilityElement.systemWideElement.element(at: initialMousePos)?.window()
 
             if let window = self.window {
@@ -270,7 +276,7 @@ final class Mover {
         }
 
         // On subsequent calls: track mouse movement and update window
-        let curMousePos = Mouse.currentPosition()
+        let curMousePos = mouse
         self.trackMouseSpeed(curMousePos: curMousePos)
         let mouseDelta = CGPoint(x: curMousePos.x - initMousePos.x, y: curMousePos.y - initMousePos.y)
         // Apply at most once per display refresh, always with the latest mouse position.
@@ -505,7 +511,7 @@ final class Mover {
         // This prevents jump because our reference point is now where the window currently is
         if shouldKeepWindow && state != .Ignore {
             if let window = self.window {
-                let currentMousePos = Mouse.currentPosition()
+                let currentMousePos = self.lastMouseLocation ?? Mouse.currentPosition()
 
                 // Update all initial values to current state
                 self.initialMousePosition = currentMousePos

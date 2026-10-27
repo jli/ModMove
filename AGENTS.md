@@ -342,6 +342,15 @@ Also tried, no/limited value:
 - Deferring activation to gesture END: fixes cause 2 only if the target wasn't already active
   (the common case is that it is), and a background window then moves BEHIND other apps' windows.
 
+**Regression found after deploy (fixed same day): gestures did nothing with real input.** Once
+the tap swallows HARDWARE mouse moves, global state stops tracking them:
+`CGEvent(source: nil).location` stays frozen (logged: frozen at (1605,1125) while the event's
+location moved across the screen), and `NSEvent.modifierFlags` goes stale. So the mouse delta was
+always 0, and the "modifiers still held?" check reset the gesture. Fix: read location and flags
+from the tap's event. `gesture-bench` could NOT catch this: synthetic events posted at the HID tap
+warp the cursor directly, so global state stays fresh. **Any change to event handling must be
+verified with a real mouse/trackpad, not only the bench.**
+
 Method notes: bench in a lab binary built from the real sources plus a tiny `main.swift`, launched
 from the terminal (it inherits the terminal's Accessibility grant — rebuilt ad-hoc-signed app
 bundles can lose theirs). Kill the deployed ModMove while benching, and RELAUNCH it afterwards.

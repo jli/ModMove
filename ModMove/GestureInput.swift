@@ -12,12 +12,17 @@ import QuartzCore
 ///
 /// Falls back to a passive global monitor (no swallowing) if the tap can't be created.
 final class MouseMoveTap {
-    /// Called for every mouse move. Return true to swallow the event.
-    private let onMouseMoved: () -> Bool
+    /// Called for every mouse move. Return true to swallow it.
+    ///
+    /// Read the location and modifiers from the EVENT, not from global state. Once the tap swallows
+    /// hardware moves, `CGEvent(source: nil).location` stops advancing and `NSEvent.modifierFlags`
+    /// goes stale (synthetic events posted by a bench script don't show this — they warp the
+    /// cursor directly).
+    private let onMouseMoved: (_ location: CGPoint, _ flags: CGEventFlags) -> Bool
     private var tap: CFMachPort?
     private var fallbackMonitor: Any?
 
-    init(onMouseMoved: @escaping () -> Bool) {
+    init(onMouseMoved: @escaping (_ location: CGPoint, _ flags: CGEventFlags) -> Bool) {
         self.onMouseMoved = onMouseMoved
 
         let callback: CGEventTapCallBack = { _, type, event, refcon in
@@ -30,7 +35,7 @@ final class MouseMoveTap {
                 }
                 return Unmanaged.passUnretained(event)
             }
-            return this.onMouseMoved() ? nil : Unmanaged.passUnretained(event)
+            return this.onMouseMoved(event.location, event.flags) ? nil : Unmanaged.passUnretained(event)
         }
 
         self.tap = CGEvent.tapCreate(
@@ -47,8 +52,8 @@ final class MouseMoveTap {
             CGEvent.tapEnable(tap: tap, enable: true)
         } else {
             NSLog("[ModMove] Could not create mouse event tap; falling back to a passive monitor")
-            self.fallbackMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { _ in
-                _ = onMouseMoved()
+            self.fallbackMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { event in
+                _ = onMouseMoved(event.cgEvent?.location ?? Mouse.currentPosition(), event.cgEvent?.flags ?? [])
             }
         }
     }
